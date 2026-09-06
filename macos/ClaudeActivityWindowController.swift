@@ -67,8 +67,8 @@ import ThisIsLoggedCore
     let header = NSStackView(views: [title, NSView(), datePicker, refresh])
     header.orientation = .horizontal
     header.alignment = .centerY
-    header.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true
     root.addArrangedSubview(header)
+    header.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true
 
     summary.textColor = .secondaryLabelColor
     summary.font = .systemFont(ofSize: 13)
@@ -92,9 +92,15 @@ import ThisIsLoggedCore
     saveButton.action = #selector(saveToJira)
     let footer = NSStackView(views: [NSView(), saveButton])
     footer.orientation = .horizontal
-    footer.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true
     root.addArrangedSubview(footer)
+    footer.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true
     scroll.heightAnchor.constraint(equalTo: root.heightAnchor, constant: -122).isActive = true
+  }
+
+  func layoutSelfcheck() {
+    window?.contentView?.layoutSubtreeIfNeeded()
+    precondition(summary.frame.height > 0 && textView.enclosingScrollView?.frame.width ?? 0 > 0, "Okno aktywności ma nieprawidłowy układ")
+    print("ok")
   }
 
   @objc private func reload() {

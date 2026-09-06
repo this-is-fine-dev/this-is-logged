@@ -1225,6 +1225,12 @@ if let notify = arguments.firstIndex(of: "--notify"), arguments.indices.contains
   let controller = SyncWindowController(period: period()) {}
   controller.layoutSelfcheck()
   withExtendedLifetime(controller) {}
+} else if arguments.contains("--activity-layout-selfcheck") {
+  _ = NSApplication.shared
+  let settings = AppSettings(source: JiraCredentials(url: URL(string: "https://jira.example.com")!, token: "test"))
+  let controller = ClaudeActivityWindowController(settings: settings)
+  controller.layoutSelfcheck()
+  withExtendedLifetime(controller) {}
 } else if arguments.contains("--selfcheck") {
   let runs = parseLog("""
   --- 2026-09-01T21:00:00.000Z ---

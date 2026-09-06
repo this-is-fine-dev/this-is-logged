@@ -62,3 +62,5 @@ env SDKROOT="$SDK_PATH" SWIFTPM_MODULECACHE_OVERRIDE="$MODULE_CACHE" CLANG_MODUL
   swift run --disable-sandbox --disable-keychain --package-path "$PROJECT_ROOT" ThisIsLoggedSelfcheck
 env SDKROOT="$SDK_PATH" SWIFTPM_MODULECACHE_OVERRIDE="$MODULE_CACHE" CLANG_MODULE_CACHE_PATH="$MODULE_CACHE" \
   swift run --disable-sandbox --disable-keychain --package-path "$PROJECT_ROOT" ThisIsLogged --selfcheck
+env SDKROOT="$SDK_PATH" SWIFTPM_MODULECACHE_OVERRIDE="$MODULE_CACHE" CLANG_MODULE_CACHE_PATH="$MODULE_CACHE" \
+  swift run --disable-sandbox --disable-keychain --package-path "$PROJECT_ROOT" ThisIsLogged --activity-layout-selfcheck
