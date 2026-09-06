@@ -12,9 +12,10 @@ SDK_PATH=${SDKROOT:-$(find /Library/Developer/CommandLineTools/SDKs -maxdepth 1 
 SPARKLE_FRAMEWORK="$PROJECT_ROOT/.build/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework"
 LATEST_TAG=$(git -C "$PROJECT_ROOT" describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null || true)
 VERSION=${LATEST_TAG#v}
+PLIST_VERSION=$(/usr/bin/plutil -extract CFBundleShortVersionString raw "$PROJECT_ROOT/macos/Info.plist")
 if [[ -z "$VERSION" ]]; then
-  VERSION=$(/usr/bin/plutil -extract CFBundleShortVersionString raw "$PROJECT_ROOT/macos/Info.plist")
-elif [[ $(git -C "$PROJECT_ROOT" rev-parse HEAD) != $(git -C "$PROJECT_ROOT" rev-list -n 1 "$LATEST_TAG") || -n $(git -C "$PROJECT_ROOT" status --porcelain) ]]; then
+  VERSION="$PLIST_VERSION"
+elif [[ "$PLIST_VERSION" != "$VERSION" && ( $(git -C "$PROJECT_ROOT" rev-parse HEAD) != $(git -C "$PROJECT_ROOT" rev-list -n 1 "$LATEST_TAG") || -n $(git -C "$PROJECT_ROOT" status --porcelain) ) ]]; then
   VERSION="${VERSION%.*}.$((${VERSION##*.} + 1))"
 fi
 BUILD_VERSION="1$VERSION"
