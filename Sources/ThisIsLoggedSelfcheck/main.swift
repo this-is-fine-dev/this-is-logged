@@ -132,6 +132,22 @@ precondition(legacy.source.url.absoluteString == "https://firma.atlassian.net")
 precondition(legacy.synchronizationEnabled && legacy.targetIssue == "AUT-1" && legacy.target?.token == "target=x")
 precondition(legacy.workdayHours == 7.5)
 
+var claudeOnlyChange = legacy
+claudeOnlyChange.claudeIntegrationEnabled = true
+let claudeOnlyVerification = claudeOnlyChange.jiraVerification(comparedTo: legacy)
+precondition(!claudeOnlyVerification.source && !claudeOnlyVerification.target,
+             "Zmiana lokalnej integracji Claude Code nie może wymagać połączenia z Jirą")
+var sourceChange = legacy
+sourceChange.source.token = "changed"
+let sourceVerification = sourceChange.jiraVerification(comparedTo: legacy)
+precondition(sourceVerification.source && !sourceVerification.target)
+var targetChange = legacy
+targetChange.targetIssue = "AUT-2"
+let targetVerification = targetChange.jiraVerification(comparedTo: legacy)
+precondition(!targetVerification.source && targetVerification.target)
+let initialVerification = legacy.jiraVerification(comparedTo: nil)
+precondition(initialVerification.source && initialVerification.target)
+
 let settingsDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
 let settingsFile = settingsDirectory.appendingPathComponent("settings.json")
 let settingsStore = SettingsStore(file: settingsFile, legacyFile: settingsDirectory.appendingPathComponent("legacy.env"))

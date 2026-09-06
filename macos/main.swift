@@ -1007,22 +1007,30 @@ private func todayPeriod() -> String {
       claudeIntegrationEnabled: claudeIntegration
     )
     let appURL = Bundle.main.bundleURL
+    let settingsStore = SettingsStore()
+    let verification = settings.jiraVerification(comparedTo: try? settingsStore.loadDraft())
 
     saveButton.isEnabled = false
     settingsProgress.startAnimation(nil)
     settingsFeedback.textColor = .secondaryLabelColor
-    settingsFeedback.stringValue = synchronization ? "Sprawdzam obie Jiry…" : "Sprawdzam Jirę główną…"
+    settingsFeedback.stringValue = switch verification {
+    case (true, true): "Sprawdzam obie Jiry…"
+    case (true, false): "Sprawdzam Jirę główną…"
+    case (false, true): "Sprawdzam Jirę docelową…"
+    case (false, false): "Zapisuję ustawienia…"
+    }
     Task.detached {
       do {
-        let source = JiraClient(credentials: settings.source)
-        _ = try await source.currentUser()
-        if settings.synchronizationEnabled, let target = settings.target {
+        if verification.source {
+          _ = try await JiraClient(credentials: settings.source).currentUser()
+        }
+        if verification.target, let target = settings.target {
           let client = JiraClient(credentials: target)
           _ = try await client.currentUser()
           _ = try await client.issueSummary(settings.targetIssue)
         }
         try ClaudeCodeIntegration().reconcile(enabled: settings.claudeIntegrationEnabled, executable: executable)
-        try SettingsStore().save(settings)
+        try settingsStore.save(settings)
         try LaunchdManager().reconcile(settings: settings, executable: executable, app: appURL)
         let persistent = deliverNotification("Konfiguracja działa. Monitoring raportów jest aktywny.") && persistentNotificationsEnabled()
         await MainActor.run {

@@ -66,6 +66,17 @@ public struct AppSettings: Equatable, Sendable {
     return URL(string: normalized.trimmingCharacters(in: CharacterSet(charactersIn: "/")))
   }
 
+  public func jiraVerification(comparedTo previous: AppSettings?) -> (source: Bool, target: Bool) {
+    (
+      source: previous?.source != source,
+      target: synchronizationEnabled && (
+        previous?.synchronizationEnabled != true ||
+        previous?.target != target ||
+        previous?.targetIssue != targetIssue
+      )
+    )
+  }
+
   private static func validURL(_ url: URL) -> Bool {
     ["http", "https"].contains(url.scheme?.lowercased() ?? "") && url.host != nil
   }
