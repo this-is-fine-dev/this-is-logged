@@ -191,6 +191,9 @@ precondition(activity.allocations.allSatisfy { $0.minutes % 5 == 0 })
 precondition(activity.allocations.contains { $0.issueKey == "ABC-123" })
 precondition(activity.allocations.contains { $0.issueKey == "DEF-2" })
 precondition(activity.allocations.contains { $0.issueKey == "Nieprzypisane" })
+try activityStore.saveReview(day: activity.day, status: .rejected, allocations: activity.allocations)
+let savedReview = try activityStore.review(day: activity.day)
+precondition(savedReview?.status == .rejected && savedReview?.allocations == activity.allocations)
 
 let integration = ClaudeCodeIntegration(home: activityDirectory)
 let existingHooks: [String: Any] = ["hooks": [

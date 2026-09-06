@@ -13,15 +13,38 @@ public struct ActivityEvent: Sendable {
   public let toolName: String?
 }
 
-public struct ActivityAllocation: Equatable, Sendable {
+public struct ActivityAllocation: Codable, Equatable, Sendable {
   public let issueKey: String
   public let minutes: Int
   public let evidence: Int
+
+  public init(issueKey: String, minutes: Int, evidence: Int) {
+    self.issueKey = issueKey
+    self.minutes = minutes
+    self.evidence = evidence
+  }
 }
 
 public struct DailyActivity: Sendable {
   public let day: String
   public let events: [ActivityEvent]
+  public let allocations: [ActivityAllocation]
+
+  public init(day: String, events: [ActivityEvent], allocations: [ActivityAllocation]) {
+    self.day = day
+    self.events = events
+    self.allocations = allocations
+  }
+}
+
+public enum ActivityReviewStatus: String, Equatable, Sendable {
+  case approved
+  case rejected
+}
+
+public struct ActivityReview: Equatable, Sendable {
+  public let day: String
+  public let status: ActivityReviewStatus
   public let allocations: [ActivityAllocation]
 }
 
@@ -202,6 +225,42 @@ public final class ActivityStore: @unchecked Sendable {
     }
   }
 
+  public func review(day: String) throws -> ActivityReview? {
+    guard LocalDay(day) != nil else { throw ClaudeActivityError.invalidHook }
+    return try withDatabase { database in
+      var statement: OpaquePointer?
+      guard sqlite3_prepare_v2(database, "SELECT status, allocations FROM activity_reviews WHERE day = ?", -1, &statement, nil) == SQLITE_OK else {
+        throw databaseError(database)
+      }
+      defer { sqlite3_finalize(statement) }
+      bind(day, to: statement, at: 1)
+      guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
+      guard let statusValue = string(statement, 0), let status = ActivityReviewStatus(rawValue: statusValue),
+            let json = string(statement, 1)?.data(using: .utf8),
+            let allocations = try? JSONDecoder().decode([ActivityAllocation].self, from: json) else {
+        throw ClaudeActivityError.database("nie można odczytać dziennego podsumowania")
+      }
+      return ActivityReview(day: day, status: status, allocations: allocations)
+    }
+  }
+
+  public func saveReview(day: String, status: ActivityReviewStatus, allocations: [ActivityAllocation]) throws {
+    guard LocalDay(day) != nil,
+          let data = try? JSONEncoder().encode(allocations),
+          let json = String(data: data, encoding: .utf8) else { throw ClaudeActivityError.invalidHook }
+    try withDatabase { database in
+      let sql = "INSERT OR REPLACE INTO activity_reviews (day, status, allocations, updated_at) VALUES (?, ?, ?, ?)"
+      var statement: OpaquePointer?
+      guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else { throw databaseError(database) }
+      defer { sqlite3_finalize(statement) }
+      bind(day, to: statement, at: 1)
+      bind(status.rawValue, to: statement, at: 2)
+      bind(json, to: statement, at: 3)
+      sqlite3_bind_double(statement, 4, Date().timeIntervalSince1970)
+      guard sqlite3_step(statement) == SQLITE_DONE else { throw databaseError(database) }
+    }
+  }
+
   public func activity(on date: Date = Date(), targetMinutes: Int = 480) throws -> DailyActivity {
     let calendar = Calendar.current
     let start = calendar.startOfDay(for: date)
@@ -313,6 +372,9 @@ public final class ActivityStore: @unchecked Sendable {
       occurred_at REAL NOT NULL, issue_key TEXT NOT NULL, summary TEXT NOT NULL, confidence REAL NOT NULL
     );
     CREATE INDEX IF NOT EXISTS activity_attributions_event ON activity_attributions(event_id, occurred_at);
+    CREATE TABLE IF NOT EXISTS activity_reviews (
+      day TEXT PRIMARY KEY, status TEXT NOT NULL, allocations TEXT NOT NULL, updated_at REAL NOT NULL
+    );
     """
 
   private static let dayFormatter: DateFormatter = {
