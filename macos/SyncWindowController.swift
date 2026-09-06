@@ -17,13 +17,15 @@ import ThisIsLoggedCore
     self.completion = completion
     let panel = NSPanel(
       contentRect: NSRect(x: 0, y: 0, width: 680, height: 560),
-      styleMask: [.titled, .closable, .resizable],
+      styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
       backing: .buffered,
       defer: false
     )
     panel.title = "Synchronizacja — \(period)"
     panel.toolbarStyle = .unifiedCompact
     panel.toolbar = NSToolbar(identifier: "synchronization")
+    panel.titleVisibility = .hidden
+    panel.titlebarAppearsTransparent = true
     panel.minSize = NSSize(width: 620, height: 420)
     super.init(window: panel)
     buildUI()
@@ -50,7 +52,7 @@ import ThisIsLoggedCore
     NSLayoutConstraint.activate([
       root.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 20),
       root.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -20),
-      root.topAnchor.constraint(equalTo: content.topAnchor, constant: 18),
+      root.topAnchor.constraint(equalTo: content.safeAreaLayoutGuide.topAnchor, constant: 18),
       root.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -18),
     ])
 

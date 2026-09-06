@@ -14,13 +14,15 @@ import ThisIsLoggedCore
     self.settings = settings
     let panel = NSPanel(
       contentRect: NSRect(x: 0, y: 0, width: 720, height: 620),
-      styleMask: [.titled, .closable, .resizable],
+      styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
       backing: .buffered,
       defer: false
     )
     panel.title = "Aktywność Claude Code"
     panel.toolbarStyle = .unifiedCompact
     panel.toolbar = NSToolbar(identifier: "claude-activity")
+    panel.titleVisibility = .hidden
+    panel.titlebarAppearsTransparent = true
     panel.collectionBehavior.insert(.moveToActiveSpace)
     panel.isReleasedWhenClosed = false
     panel.hidesOnDeactivate = false
@@ -50,7 +52,7 @@ import ThisIsLoggedCore
     NSLayoutConstraint.activate([
       root.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 18),
       root.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -18),
-      root.topAnchor.constraint(equalTo: content.topAnchor, constant: 18),
+      root.topAnchor.constraint(equalTo: content.safeAreaLayoutGuide.topAnchor, constant: 18),
       root.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -18),
     ])
 

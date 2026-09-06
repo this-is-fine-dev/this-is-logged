@@ -485,13 +485,15 @@ private func todayPeriod() -> String {
   private func setupSettingsPanel() {
     panel = NSPanel(
       contentRect: NSRect(x: 0, y: 0, width: 590, height: 750),
-      styleMask: [.titled, .closable],
+      styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
       backing: .buffered,
       defer: false
     )
     panel.title = "This Is Logged"
     panel.toolbarStyle = .unifiedCompact
     panel.toolbar = NSToolbar(identifier: "settings")
+    panel.titleVisibility = .hidden
+    panel.titlebarAppearsTransparent = true
     panel.isReleasedWhenClosed = false
     panel.hidesOnDeactivate = false
     panel.center()
@@ -505,7 +507,7 @@ private func todayPeriod() -> String {
     NSLayoutConstraint.activate([
       root.leadingAnchor.constraint(equalTo: panel.contentView!.leadingAnchor, constant: 22),
       root.trailingAnchor.constraint(equalTo: panel.contentView!.trailingAnchor, constant: -22),
-      root.topAnchor.constraint(equalTo: panel.contentView!.topAnchor, constant: 18),
+      root.topAnchor.constraint(equalTo: panel.contentView!.safeAreaLayoutGuide.topAnchor, constant: 18),
       root.bottomAnchor.constraint(lessThanOrEqualTo: panel.contentView!.bottomAnchor, constant: -18),
     ])
 

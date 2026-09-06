@@ -20,6 +20,12 @@ for window_source in main.swift SyncWindowController.swift ClaudeActivityWindowC
     echo "$window_source does not use the full-size unified title bar" >&2
     exit 1
   fi
+  if ! rg -q 'titleVisibility = \.hidden' "$PROJECT_ROOT/macos/$window_source" ||
+     ! rg -q 'titlebarAppearsTransparent = true' "$PROJECT_ROOT/macos/$window_source" ||
+     ! rg -q '\.fullSizeContentView' "$PROJECT_ROOT/macos/$window_source"; then
+    echo "$window_source does not embed window controls in the application surface" >&2
+    exit 1
+  fi
 done
 
 if ! rg -q 'window\?\.orderFrontRegardless\(\)' "$PROJECT_ROOT/macos/ClaudeActivityWindowController.swift"; then
