@@ -14,11 +14,14 @@ import ThisIsLoggedCore
     self.settings = settings
     let panel = NSPanel(
       contentRect: NSRect(x: 0, y: 0, width: 720, height: 620),
-      styleMask: [.titled, .closable, .resizable, .utilityWindow],
+      styleMask: [.titled, .closable, .resizable],
       backing: .buffered,
       defer: false
     )
     panel.title = "Aktywność Claude Code"
+    panel.toolbarStyle = .unifiedCompact
+    panel.toolbar = NSToolbar(identifier: "claude-activity")
+    panel.collectionBehavior.insert(.moveToActiveSpace)
     panel.isReleasedWhenClosed = false
     panel.hidesOnDeactivate = false
     super.init(window: panel)
@@ -33,6 +36,7 @@ import ThisIsLoggedCore
     window?.center()
     NSApplication.shared.activate(ignoringOtherApps: true)
     window?.makeKeyAndOrderFront(sender)
+    window?.orderFrontRegardless()
   }
 
   private func buildUI() {

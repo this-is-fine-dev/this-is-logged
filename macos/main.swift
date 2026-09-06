@@ -485,11 +485,13 @@ private func todayPeriod() -> String {
   private func setupSettingsPanel() {
     panel = NSPanel(
       contentRect: NSRect(x: 0, y: 0, width: 590, height: 750),
-      styleMask: [.titled, .closable, .utilityWindow],
+      styleMask: [.titled, .closable],
       backing: .buffered,
       defer: false
     )
     panel.title = "This Is Logged"
+    panel.toolbarStyle = .unifiedCompact
+    panel.toolbar = NSToolbar(identifier: "settings")
     panel.isReleasedWhenClosed = false
     panel.hidesOnDeactivate = false
     panel.center()

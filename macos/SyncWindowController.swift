@@ -17,11 +17,13 @@ import ThisIsLoggedCore
     self.completion = completion
     let panel = NSPanel(
       contentRect: NSRect(x: 0, y: 0, width: 680, height: 560),
-      styleMask: [.titled, .closable, .resizable, .utilityWindow],
+      styleMask: [.titled, .closable, .resizable],
       backing: .buffered,
       defer: false
     )
     panel.title = "Synchronizacja — \(period)"
+    panel.toolbarStyle = .unifiedCompact
+    panel.toolbar = NSToolbar(identifier: "synchronization")
     panel.minSize = NSSize(width: 620, height: 420)
     super.init(window: panel)
     buildUI()

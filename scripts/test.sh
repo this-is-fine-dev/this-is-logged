@@ -10,6 +10,23 @@ if rg -q 'MainActor\.assumeIsolated' "$PROJECT_ROOT/macos/main.swift"; then
   exit 1
 fi
 
+if rg -q '\.utilityWindow' "$PROJECT_ROOT/macos"; then
+  echo "utility window style shrinks application title bars" >&2
+  exit 1
+fi
+
+for window_source in main.swift SyncWindowController.swift ClaudeActivityWindowController.swift; do
+  if ! rg -q 'toolbarStyle = \.unifiedCompact' "$PROJECT_ROOT/macos/$window_source"; then
+    echo "$window_source does not use the full-size unified title bar" >&2
+    exit 1
+  fi
+done
+
+if ! rg -q 'window\?\.orderFrontRegardless\(\)' "$PROJECT_ROOT/macos/ClaudeActivityWindowController.swift"; then
+  echo "Claude activity window may remain hidden after the status menu closes" >&2
+  exit 1
+fi
+
 if rg -q 'Timer\.scheduledTimer\(timeInterval:.*#selector\(refresh\)' "$PROJECT_ROOT/macos/main.swift"; then
   echo "unsafe Timer selector for @MainActor refresh" >&2
   exit 1
