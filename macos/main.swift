@@ -7,6 +7,8 @@ import ThisIsLoggedCore
 
 private let collisionCategory = "THIS_IS_LOGGED_COLLISION"
 private let resolveCollisionsAction = "RESOLVE_COLLISIONS"
+private let activityCategory = "THIS_IS_LOGGED_ACTIVITY"
+private let openActivityAction = "OPEN_ACTIVITY"
 private let logURL = FileManager.default.homeDirectoryForCurrentUser
   .appendingPathComponent("Library/Logs/this-is-logged.log")
 private let statusLogURL = FileManager.default.homeDirectoryForCurrentUser
@@ -72,7 +74,12 @@ private func registerNotificationCategories(_ center: UNUserNotificationCenter) 
         UNNotificationAction(identifier: "IGNORE_COLLISIONS", title: "Pomiń", options: []),
       ],
       intentIdentifiers: []
-    )
+    ),
+    UNNotificationCategory(
+      identifier: activityCategory,
+      actions: [UNNotificationAction(identifier: openActivityAction, title: "Otwórz analizę", options: [.foreground])],
+      intentIdentifiers: []
+    ),
   ])
 }
 
@@ -258,6 +265,7 @@ private func readSettings() -> [String: String] {
       "SYNC_TIME": settings.synchronizationTime,
       "REMINDER_TIME": settings.reminderTime,
       "WORKDAY_HOURS": String(settings.workdayHours),
+      "CLAUDE_ENABLED": settings.claudeIntegrationEnabled ? "1" : "0",
     ]
   }
   guard let text = try? String(contentsOf: configURL, encoding: .utf8) else { return [:] }
@@ -327,12 +335,14 @@ private func todayPeriod() -> String {
   private let syncTimeField = NSTextField(frame: .zero)
   private let reminderTimeField = NSTextField(frame: .zero)
   private let workdayHoursField = NSTextField(frame: .zero)
+  private let claudeToggle = NSButton(checkboxWithTitle: "Zbieraj aktywność z Claude Code", target: nil, action: nil)
   private let settingsFeedback = NSTextField(labelWithString: " ")
   private let settingsProgress = NSProgressIndicator(frame: .zero)
   private var targetBox: NSBox!
   private var saveButton: NSButton!
   private var panel: NSPanel!
   private var syncWindow: SyncWindowController?
+  private var activityWindow: ClaudeActivityWindowController?
   private var timer: Timer?
   private var lastStatusKick = Date.distantPast
   private lazy var normalMenuIcon = menuIcon()
@@ -340,6 +350,7 @@ private func todayPeriod() -> String {
   private var configuredSyncTime = savedSetting("SYNC_TIME", fallback: environment["THIS_IS_LOGGED_SCHEDULE"] ?? "23:00")
   private var configuredReminderTime = savedSetting("REMINDER_TIME", fallback: environment["THIS_IS_LOGGED_REMINDER"] ?? "16:00")
   private var configuredWorkdayHours = savedSetting("WORKDAY_HOURS", fallback: environment["THIS_IS_LOGGED_WORKDAY_HOURS"] ?? "8")
+  private var configuredClaudeEnabled = savedSetting("CLAUDE_ENABLED", fallback: "0") == "1"
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     NSApp.mainMenu = makeMainMenu()
@@ -403,6 +414,9 @@ private func todayPeriod() -> String {
 
     menu.addItem(.separator())
     menu.addItem(sectionItem("APLIKACJA"))
+    if configuredClaudeEnabled {
+      menu.addItem(actionItem("Aktywność Claude Code…", #selector(showClaudeActivity), ""))
+    }
     menu.addItem(actionItem("Ustawienia i połączenia…", #selector(showSettings), ","))
     let updateItem = NSMenuItem(
       title: "Sprawdź aktualizacje…",
@@ -470,7 +484,7 @@ private func todayPeriod() -> String {
 
   private func setupSettingsPanel() {
     panel = NSPanel(
-      contentRect: NSRect(x: 0, y: 0, width: 590, height: 670),
+      contentRect: NSRect(x: 0, y: 0, width: 590, height: 750),
       styleMask: [.titled, .closable, .utilityWindow],
       backing: .buffered,
       defer: false
@@ -557,6 +571,13 @@ private func todayPeriod() -> String {
       ("Przypomnienie", reminderTimeField), ("Pełny dzień", hoursControl),
     ]))
 
+    let claudeDescription = NSTextField(labelWithString: "Hooki zapisują lokalnie wiadomości i narzędzia. MCP pozwala Claude przypisywać je do zadań.")
+    claudeDescription.textColor = .secondaryLabelColor
+    claudeDescription.lineBreakMode = .byWordWrapping
+    claudeDescription.maximumNumberOfLines = 2
+    claudeDescription.widthAnchor.constraint(equalToConstant: 365).isActive = true
+    root.addArrangedSubview(settingsBox("Claude Code", [("", claudeToggle), ("", claudeDescription)]))
+
     settingsFeedback.textColor = .secondaryLabelColor
     settingsFeedback.lineBreakMode = .byWordWrapping
     settingsFeedback.maximumNumberOfLines = 2
@@ -571,6 +592,7 @@ private func todayPeriod() -> String {
     root.addArrangedSubview(footer)
     footer.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true
     syncToggle.state = configuredSyncEnabled ? .on : .off
+    claudeToggle.state = configuredClaudeEnabled ? .on : .off
     toggleSynchronization()
   }
 
@@ -878,6 +900,7 @@ private func todayPeriod() -> String {
     syncTimeField.stringValue = values["SYNC_TIME"] ?? configuredSyncTime
     reminderTimeField.stringValue = values["REMINDER_TIME"] ?? configuredReminderTime
     workdayHoursField.stringValue = values["WORKDAY_HOURS"] ?? configuredWorkdayHours
+    claudeToggle.state = values["CLAUDE_ENABLED"] == "1" ? .on : .off
     toggleSynchronization()
     settingsFeedback.textColor = .secondaryLabelColor
     settingsFeedback.stringValue = configurationComplete(values) ? "Zmiany zostaną sprawdzone w Jirze przed zapisem." : "Uzupełnij Jirę główną, aby uruchomić monitoring."
@@ -919,8 +942,15 @@ private func todayPeriod() -> String {
     syncWindow?.showWindow(nil)
   }
 
+  @objc private func showClaudeActivity() {
+    guard let settings = try? SettingsStore().load() else { return }
+    activityWindow = activityWindow ?? ClaudeActivityWindowController(settings: settings)
+    activityWindow?.showWindow(nil)
+  }
+
   @objc private func saveSettings() {
     let synchronization = syncToggle.state == .on
+    let claudeIntegration = claudeToggle.state == .on
     let sourceURL = normalizedURL(sourceURLField.stringValue)
     let targetURL = normalizedURL(targetURLField.stringValue)
     let sourceEmail = sourceEmailField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -973,7 +1003,8 @@ private func todayPeriod() -> String {
       commentIssueKeys: commentKeysToggle.state == .on,
       synchronizationTime: sync,
       reminderTime: reminder,
-      workdayHours: hours
+      workdayHours: hours,
+      claudeIntegrationEnabled: claudeIntegration
     )
     let appURL = Bundle.main.bundleURL
 
@@ -990,6 +1021,7 @@ private func todayPeriod() -> String {
           _ = try await client.currentUser()
           _ = try await client.issueSummary(settings.targetIssue)
         }
+        try ClaudeCodeIntegration().reconcile(enabled: settings.claudeIntegrationEnabled, executable: executable)
         try SettingsStore().save(settings)
         try LaunchdManager().reconcile(settings: settings, executable: executable, app: appURL)
         let persistent = deliverNotification("Konfiguracja działa. Monitoring raportów jest aktywny.") && persistentNotificationsEnabled()
@@ -998,12 +1030,14 @@ private func todayPeriod() -> String {
           self.configuredSyncTime = sync
           self.configuredReminderTime = reminder
           self.configuredWorkdayHours = String(hours)
+          self.configuredClaudeEnabled = claudeIntegration
+          self.activityWindow = nil
           self.setupMenu()
           self.saveButton.isEnabled = true
           self.settingsProgress.stopAnimation(nil)
           self.settingsFeedback.textColor = persistent ? .systemGreen : .systemOrange
           self.settingsFeedback.stringValue = persistent
-            ? "Gotowe. Monitoring uruchomiony."
+            ? (claudeIntegration ? "Gotowe. Monitoring i Claude Code są aktywne." : "Gotowe. Monitoring uruchomiony.")
             : "Gotowe. W powiadomieniach wybierz styl „Stałe”."
           if !persistent, let settings = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension") {
             NSWorkspace.shared.open(settings)
@@ -1093,6 +1127,9 @@ private func todayPeriod() -> String {
       DispatchQueue.main.async {
         self.openInteractive(period())
       }
+    } else if content.categoryIdentifier == activityCategory &&
+      (response.actionIdentifier == openActivityAction || response.actionIdentifier == UNNotificationDefaultActionIdentifier) {
+      DispatchQueue.main.async { self.showClaudeActivity() }
     }
     completionHandler()
   }
@@ -1136,6 +1173,26 @@ if let notify = arguments.firstIndex(of: "--notify"), arguments.indices.contains
   exit(deliverNotification(arguments[notify + 1], category: collisionCategory) ? 0 : 1)
 } else if arguments.contains("--notification-check") {
   exit(persistentNotificationsEnabled() ? 0 : 1)
+} else if arguments.contains("--ingest-claude-hook") {
+  do {
+    let capture = try ActivityStore().recordClaudeHook(FileHandle.standardInput.readDataToEndOfFile())
+    if capture.eventName == "UserPromptSubmit" {
+      let issue = capture.issueKey.map { " Automatycznie rozpoznane zadanie: \($0)." } ?? ""
+      let context = "This Is Logged zapisał to polecenie jako zdarzenie \(capture.eventID).\(issue) Jeśli potrafisz wiarygodnie wskazać zadanie Jiry, użyj narzędzia suggest_attribution; nie zgaduj."
+      let response: [String: Any] = [
+        "hookSpecificOutput": ["hookEventName": "UserPromptSubmit", "additionalContext": context]
+      ]
+      let output = try JSONSerialization.data(withJSONObject: response)
+      FileHandle.standardOutput.write(output)
+      FileHandle.standardOutput.write(Data("\n".utf8))
+    }
+    exit(0)
+  } catch {
+    fputs("this-is-logged hook: \(error.localizedDescription)\n", stderr)
+    exit(1)
+  }
+} else if arguments.contains("--mcp") {
+  ClaudeMCPServer().run()
 } else if arguments.contains("--layout-selfcheck") {
   _ = NSApplication.shared
   let delegate = AppDelegate()
@@ -1192,10 +1249,15 @@ if let notify = arguments.firstIndex(of: "--notify"), arguments.indices.contains
   runAgentMode {
     let settings = try SettingsStore().load()
     let decision = try await TimeReportEngine.live(settings: settings).reminder()
-    if let message = decision.message, !deliverNotification(message) {
+    let activity = settings.claudeIntegrationEnabled
+      ? try? ActivityStore().activity(on: Date(), targetMinutes: Int(settings.workdayHours * 60)) : nil
+    let activityMessage = activity?.events.isEmpty == false
+      ? "Analiza pracy z Claude Code jest gotowa. Sprawdź przypisania przed zapisem do Jiry." : nil
+    let message = [decision.message, activityMessage].compactMap { $0 }.joined(separator: "\n\n")
+    if !message.isEmpty, !deliverNotification(message, category: activityMessage == nil ? nil : activityCategory) {
       throw NSError(domain: "ThisIsLogged", code: 3, userInfo: [NSLocalizedDescriptionKey: "Nie udało się wyświetlić powiadomienia."])
     }
-    print(decision.message ?? "Wszystkie dni robocze są kompletne.")
+    print(message.isEmpty ? "Wszystkie dni robocze są kompletne." : message)
   }
 } else if arguments.contains("--agent-sync") {
   print("--- \(TimeReportEngine.iso(Date())) ---")

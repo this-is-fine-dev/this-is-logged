@@ -21,6 +21,7 @@ public struct AppSettings: Equatable, Sendable {
   public var synchronizationTime: String
   public var reminderTime: String
   public var workdayHours: Double
+  public var claudeIntegrationEnabled: Bool
 
   public init(
     source: JiraCredentials,
@@ -30,7 +31,8 @@ public struct AppSettings: Equatable, Sendable {
     commentIssueKeys: Bool = false,
     synchronizationTime: String = "23:00",
     reminderTime: String = "16:00",
-    workdayHours: Double = 8
+    workdayHours: Double = 8,
+    claudeIntegrationEnabled: Bool = false
   ) {
     self.source = source
     self.synchronizationEnabled = synchronizationEnabled
@@ -40,6 +42,7 @@ public struct AppSettings: Equatable, Sendable {
     self.synchronizationTime = synchronizationTime
     self.reminderTime = reminderTime
     self.workdayHours = workdayHours
+    self.claudeIntegrationEnabled = claudeIntegrationEnabled
   }
 
   public func validated() throws -> Self {
@@ -110,6 +113,7 @@ public final class SettingsStore: @unchecked Sendable {
     var synchronizationTime: String
     var reminderTime: String
     var workdayHours: Double
+    var claudeIntegrationEnabled: Bool?
   }
 
   private let file: URL
@@ -151,7 +155,8 @@ public final class SettingsStore: @unchecked Sendable {
       commentIssueKeys: stored.commentIssueKeys,
       synchronizationTime: stored.synchronizationTime,
       reminderTime: stored.reminderTime,
-      workdayHours: stored.workdayHours
+      workdayHours: stored.workdayHours,
+      claudeIntegrationEnabled: stored.claudeIntegrationEnabled ?? false
     )
   }
 
@@ -169,7 +174,8 @@ public final class SettingsStore: @unchecked Sendable {
       commentIssueKeys: settings.commentIssueKeys,
       synchronizationTime: settings.synchronizationTime,
       reminderTime: settings.reminderTime,
-      workdayHours: settings.workdayHours
+      workdayHours: settings.workdayHours,
+      claudeIntegrationEnabled: settings.claudeIntegrationEnabled
     )
     try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
     let temporary = file.deletingLastPathComponent().appendingPathComponent(".settings.\(UUID().uuidString).tmp")

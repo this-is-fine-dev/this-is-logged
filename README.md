@@ -5,8 +5,8 @@
 Natywna aplikacja macOS w pasku menu, która pilnuje raportów czasu w Jirze. Pokazuje stan dnia,
 tygodnia i miesiąca, przypomina o brakach i opcjonalnie kopiuje dzienne sumy do drugiej Jiry.
 
-Cała aplikacja, klient Jiry i automatyzacja są napisane w Swifcie. Paczka nie zawiera Node.js,
-pnpm, skryptów uruchamianych w Terminalu ani zewnętrznych zależności.
+Cała aplikacja, klient Jiry i automatyzacja są napisane w Swifcie. Paczka nie wymaga Node.js,
+pnpm ani skryptów uruchamianych w Terminalu; do aktualizacji zawiera framework Sparkle.
 
 ## Tryby
 
@@ -31,6 +31,7 @@ Awaria albo wyłączenie synchronizacji nie blokuje odczytu raportów z Jiry gł
 - natywne okno rozwiązywania różnic bez Terminala;
 - cała konfiguracja dostępna w natywnym oknie aplikacji.
 - automatyczne aktualizacje przez Sparkle i GitHub Releases.
+- opcjonalne zbieranie aktywności Claude Code ze wszystkich worktree i inteligentna propozycja worklogów.
 
 ## Wymagania
 
@@ -38,6 +39,7 @@ Awaria albo wyłączenie synchronizacji nie blokuje odczytu raportów z Jiry gł
 - token do Jiry głównej;
 - token do Jiry docelowej tylko przy synchronizacji;
 - bieżąca paczka jest budowana dla Apple Silicon.
+- Claude Code jest wymagany tylko po włączeniu integracji aktywności.
 
 ## Instalacja
 
@@ -92,6 +94,32 @@ każdej różnicy wybrać:
 
 Każdy zapis wymaga końcowego potwierdzenia.
 
+## Claude Code i automatyczne worklogi
+
+Opcję **Zbieraj aktywność z Claude Code** włącza się w ustawieniach aplikacji. Konfigurator sam:
+
+- instaluje hooki Claude Code dla wiadomości użytkownika, odpowiedzi, narzędzi, sesji, subagentów i worktree;
+- rejestruje globalny serwer MCP `this-is-logged` dla wszystkich projektów użytkownika;
+- pozwala agentom odczytać wspólną aktywność i zapisać sugestię przypisania do zadania Jiry.
+
+Menu **Aktywność Claude Code…** łączy sesje ze wszystkich worktree, pokazuje pełny lokalny dziennik i
+propozycję dnia. Branch lub treść w formacie `ABC-123` daje automatyczne przypisanie. Pozostały czas
+ma nazwę **Nieprzypisane** — aplikacja nigdy nie wymyśla zadania tylko po to, aby domknąć 8 h.
+
+Podział jest zaokrąglany globalnie do 5 minut. W zwykły dzień suma propozycji wraz z czasem
+nieprzypisanym odpowiada ustawionej normie. W weekend aplikacja pokazuje wyłącznie oszacowaną
+aktywność, bez sztucznego dopełniania do 8 h.
+
+Przycisk **Zatwierdź i zapisz w Jirze** pokazuje końcowe potwierdzenie i zapisuje wyłącznie pozycje z
+kluczem zadania do Jiry głównej. Przed pierwszym zapisem sprawdzane są istniejące worklogi. Zgodne są
+pomijane, a konflikt zatrzymuje całą operację bez nadpisywania.
+
+O ustawionej godzinie przypomnienia aplikacja dołącza informację o gotowej analizie dnia. Przycisk
+**Otwórz analizę** w powiadomieniu prowadzi bezpośrednio do lokalnego dziennika i propozycji.
+
+MCP udostępnia trzy lokalne narzędzia: `get_activity`, `suggest_attribution` i `review_day`. Nie ma
+narzędzia zapisującego do Jiry — ta operacja pozostaje wyłącznie w rękach użytkownika aplikacji.
+
 ## Automatyzacja `launchd`
 
 | Zadanie | Działanie |
@@ -110,6 +138,7 @@ po włączeniu drugiej Jiry.
 |---|---|
 | Ustawienia i tokeny | `~/Library/Application Support/this-is-logged/settings.json` (`0600`) |
 | Stan i cache offline | `~/Library/Application Support/this-is-logged/status.json` |
+| Aktywność Claude Code | `~/Library/Application Support/this-is-logged/activity.sqlite` (`0600`) |
 | Agenty | `~/Library/LaunchAgents/dev.this-is-fine.this-is-logged.*.plist` |
 | Logi | `~/Library/Logs/this-is-logged*.log` |
 
@@ -133,6 +162,9 @@ Tag `vX.Y.Z` ustawia wersję aplikacji i uruchamia workflow publikujący podpisa
 sekretu Actions `SPARKLE_PRIVATE_KEY`; jego wartością jest zawartość lokalnego, ignorowanego przez
 Git pliku `.sparkle/private-key`.
 
+Notatki z `release-notes/X.Y.Z.md` są osadzane w appcaście i wyświetlane bezpośrednio w oknie
+Sparkle. Gdy pliku nie ma, workflow używa tytułów commitów od poprzedniego taga.
+
 ## Bezpieczeństwo
 
 - monitoring wykonuje tylko żądania odczytu;
@@ -141,5 +173,6 @@ Git pliku `.sparkle/private-key`.
 - operacja nadpisania wymaga ręcznego wyboru i potwierdzenia;
 - tokeny nie trafiają do argumentów procesów, plistów, statusu ani logów;
 - tokeny są zapisane lokalnie jawnym tekstem w pliku czytelnym tylko dla konta użytkownika.
+- wiadomości Claude Code i argumenty narzędzi nie opuszczają lokalnej bazy aplikacji; dostęp do nich ma lokalny MCP włączany przez użytkownika.
 
 Szczegóły systemowe: [Automatyzacja na macOS](docs/macos.md).

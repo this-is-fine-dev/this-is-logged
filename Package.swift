@@ -13,13 +13,13 @@ let package = Package(
     .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.9.2"),
   ],
   targets: [
-    .target(name: "ThisIsLoggedCore"),
+    .target(name: "ThisIsLoggedCore", linkerSettings: [.linkedLibrary("sqlite3")]),
     .executableTarget(
       name: "ThisIsLogged",
       dependencies: ["ThisIsLoggedCore", .product(name: "Sparkle", package: "Sparkle")],
       path: "macos",
       exclude: ["AppIcon.icns", "AppIcon.png", "Info.plist"],
-      sources: ["main.swift", "SyncWindowController.swift"],
+      sources: ["main.swift", "SyncWindowController.swift", "ClaudeActivityWindowController.swift"],
       linkerSettings: [
         .linkedFramework("AppKit"),
         .linkedFramework("UserNotifications"),

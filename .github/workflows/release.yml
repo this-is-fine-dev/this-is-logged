@@ -13,6 +13,8 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set version from tag
         run: |
@@ -32,8 +34,15 @@ jobs:
           version=${GITHUB_REF_NAME#v}
           mkdir -p dist/update
           cp "dist/This-Is-Logged-$version.zip" dist/update/
+          if [[ -f "release-notes/$version.md" ]]; then
+            cp "release-notes/$version.md" "dist/update/This-Is-Logged-$version.md"
+          else
+            previous=$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)
+            git log --pretty='- %s' "${previous:+$previous..}$GITHUB_REF_NAME" > "dist/update/This-Is-Logged-$version.md"
+          fi
           printf '%s' "$SPARKLE_PRIVATE_KEY" | ".build/artifacts/sparkle/Sparkle/bin/generate_appcast" \
             --ed-key-file - \
+            --embed-release-notes \
             --download-url-prefix "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/" \
             -o dist/update/appcast.xml \
             dist/update
@@ -43,9 +52,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           version=${GITHUB_REF_NAME#v}
+          if [[ -f "release-notes/$version.md" ]]; then
+            notes=(--notes-file "release-notes/$version.md")
+          else
+            notes=(--generate-notes)
+          fi
           gh release create "$GITHUB_REF_NAME" \
             "dist/This-Is-Logged-$version.zip" \
             "dist/This Is Logged.dmg" \
             "dist/update/appcast.xml" \
-            --generate-notes \
+            "${notes[@]}" \
             --title "This Is Logged $version"

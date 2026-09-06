@@ -144,6 +144,58 @@ let permissions = try FileManager.default.attributesOfItem(atPath: settingsFile.
 precondition(permissions?.intValue == 0o600)
 try FileManager.default.removeItem(at: settingsDirectory)
 
+let activityDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+let activityStore = ActivityStore(file: activityDirectory.appendingPathComponent("activity.sqlite"))
+var activityCalendar = Calendar(identifier: .gregorian)
+activityCalendar.timeZone = .current
+let activityDay = activityCalendar.date(from: DateComponents(year: 2026, month: 9, day: 3, hour: 9))!
+func hook(_ event: String, session: String, text: String? = nil) -> Data {
+  var value = ["hook_event_name": event, "session_id": session, "cwd": ""]
+  if let text { value[event == "UserPromptSubmit" ? "prompt" : "last_assistant_message"] = text }
+  return try! JSONSerialization.data(withJSONObject: value)
+}
+let firstActivity = try activityStore.recordClaudeHook(hook("UserPromptSubmit", session: "one", text: "Zrób ABC-123"), now: activityDay)
+_ = try activityStore.recordClaudeHook(hook("Stop", session: "one"), now: activityDay.addingTimeInterval(12 * 60))
+let secondActivity = try activityStore.recordClaudeHook(hook("UserPromptSubmit", session: "two", text: "Popraw formularz"), now: activityDay.addingTimeInterval(60 * 60))
+_ = try activityStore.recordClaudeHook(hook("Stop", session: "two"), now: activityDay.addingTimeInterval(80 * 60))
+let firstChunk = try JSONSerialization.data(withJSONObject: [
+  "hook_event_name": "MessageDisplay", "session_id": "two", "cwd": "", "message_id": "message-1", "index": 0, "delta": "Hello ",
+])
+let secondChunk = try JSONSerialization.data(withJSONObject: [
+  "hook_event_name": "MessageDisplay", "session_id": "two", "cwd": "", "message_id": "message-1", "index": 1, "delta": "world", "final": true,
+])
+_ = try activityStore.recordClaudeHook(firstChunk, now: activityDay.addingTimeInterval(70 * 60))
+_ = try activityStore.recordClaudeHook(secondChunk, now: activityDay.addingTimeInterval(71 * 60))
+try activityStore.suggest(eventIDs: [secondActivity.eventID], issueKey: "DEF-2", summary: "Formularz", confidence: 0.9)
+let activity = try activityStore.activity(on: activityDay, targetMinutes: 60)
+precondition(firstActivity.issueKey == "ABC-123" && activity.events.count == 5)
+precondition(activity.events.first { $0.kind == "MessageDisplay" }?.text == "Hello world")
+precondition(activity.allocations.reduce(0) { $0 + $1.minutes } == 60)
+precondition(activity.allocations.allSatisfy { $0.minutes % 5 == 0 })
+precondition(activity.allocations.contains { $0.issueKey == "ABC-123" })
+precondition(activity.allocations.contains { $0.issueKey == "DEF-2" })
+precondition(activity.allocations.contains { $0.issueKey == "Nieprzypisane" })
+
+let integration = ClaudeCodeIntegration(home: activityDirectory)
+let existingHooks: [String: Any] = ["hooks": [
+  "UserPromptSubmit": [["matcher": "", "hooks": [["type": "command", "command": "custom-hook"]]]],
+  "Stop": [["matcher": "", "hooks": [["type": "command", "command": "old --ingest-claude-hook"]]]],
+]]
+let installedHooks = integration.hooksSettings(from: existingHooks, command: "new --ingest-claude-hook", enabled: true)
+let installedJSON = String(data: try JSONSerialization.data(withJSONObject: installedHooks), encoding: .utf8)!
+precondition(installedJSON.contains("custom-hook") && installedJSON.contains("new --ingest-claude-hook") && !installedJSON.contains("old --ingest-claude-hook"))
+precondition(installedJSON.contains("mcp__this-is-logged__get_activity"))
+let removedHooks = integration.hooksSettings(from: installedHooks, command: "", enabled: false)
+let removedJSON = String(data: try JSONSerialization.data(withJSONObject: removedHooks), encoding: .utf8)!
+precondition(removedJSON.contains("custom-hook") && !removedJSON.contains("--ingest-claude-hook"))
+precondition(!removedJSON.contains("mcp__this-is-logged__get_activity"))
+
+let mcp = ClaudeMCPServer(store: activityStore)
+let mcpResponse = mcp.response(to: ["jsonrpc": "2.0", "id": 1, "method": "tools/list"])
+let mcpTools = ((mcpResponse?["result"] as? [String: Any])?["tools"] as? [[String: Any]]) ?? []
+precondition(mcpTools.map { $0["name"] as? String }.compactMap { $0 } == ["get_activity", "suggest_attribution", "review_day"])
+try FileManager.default.removeItem(at: activityDirectory)
+
 let configuration = URLSessionConfiguration.ephemeral
 configuration.protocolClasses = [StubProtocol.self]
 let client = JiraClient(
@@ -194,6 +246,26 @@ Task.detached {
     let interactive = try await engine.execute(plan, actions: [LocalDay("2026-09-01")!: .replace])
     let deleted = await targetJira.deleted
     precondition(interactive.writtenDays == 2 && deleted == ["old-1"])
+
+    let activityJira = FakeJira(user: "activity")
+    let activityResult = try await ActivityJiraLogger(jira: activityJira).log(activity)
+    precondition(activityResult.writtenIssues == 2 && activityResult.skippedIssues == 0 && activityResult.writtenMinutes == 30)
+    let activityAdded = await activityJira.added
+    precondition(activityAdded.count == 2)
+    let conflictingJira = FakeJira(user: "activity", issue: [LocalDay("2026-09-03")!: DayTotal(seconds: 300)])
+    do {
+      _ = try await ActivityJiraLogger(jira: conflictingJira).log(activity)
+      preconditionFailure("activity conflict should stop the write")
+    } catch is ActivityLoggingError {}
+    let conflictingAdded = await conflictingJira.added
+    precondition(conflictingAdded.isEmpty)
+    let overflowingJira = FakeJira(user: "activity", daily: [LocalDay("2026-09-03")!: DayTotal(seconds: 40 * 60)])
+    do {
+      _ = try await ActivityJiraLogger(jira: overflowingJira).log(activity)
+      preconditionFailure("daily overflow should stop the write")
+    } catch is ActivityLoggingError {}
+    let overflowingAdded = await overflowingJira.added
+    precondition(overflowingAdded.isEmpty)
 
     let cacheDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     let cache = SnapshotStore(file: cacheDirectory.appendingPathComponent("status.json"))
