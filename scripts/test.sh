@@ -5,6 +5,11 @@ PROJECT_ROOT=${0:A:h:h}
 MODULE_CACHE="$PROJECT_ROOT/.build/ModuleCache"
 SDK_PATH=${SDKROOT:-$(find /Library/Developer/CommandLineTools/SDKs -maxdepth 1 -type d -name 'MacOSX[0-9]*.sdk' | sort -V | head -1)}
 
+if rg -q 'MainActor\.assumeIsolated' "$PROJECT_ROOT/macos/main.swift"; then
+  echo "unsafe MainActor assumption crashes the refresh timer" >&2
+  exit 1
+fi
+
 if rg -q 'Timer\.scheduledTimer\(timeInterval:.*#selector\(refresh\)' "$PROJECT_ROOT/macos/main.swift"; then
   echo "unsafe Timer selector for @MainActor refresh" >&2
   exit 1
@@ -22,6 +27,11 @@ fi
 
 if rg -q 'action: #selector\(SPUStandardUpdaterController\.checkForUpdates' "$PROJECT_ROOT/macos/main.swift"; then
   echo "direct Sparkle action loses the first click while the updater is starting" >&2
+  exit 1
+fi
+
+if ! rg -Uq 'private func presentUpdater\(_ sender: Any\?\) \{\n    NSApplication\.shared\.activate\(ignoringOtherApps: true\)\n    updaterController\.checkForUpdates\(sender\)\n  \}' "$PROJECT_ROOT/macos/main.swift"; then
+  echo "Sparkle window can open behind the current application" >&2
   exit 1
 fi
 

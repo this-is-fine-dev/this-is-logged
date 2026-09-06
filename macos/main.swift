@@ -364,7 +364,7 @@ private func todayPeriod() -> String {
     installAgentsIfNeeded()
     if arguments.contains("--show-panel") || !configurationComplete(readSettings()) { showSettings() }
     timer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
-      MainActor.assumeIsolated { self?.refresh() }
+      Task { @MainActor in self?.refresh() }
     }
   }
 
@@ -627,7 +627,7 @@ private func todayPeriod() -> String {
   @objc private func checkForUpdates(_ sender: Any?) {
     let updater = updaterController.updater
     guard !updater.canCheckForUpdates else {
-      updaterController.checkForUpdates(sender)
+      presentUpdater(sender)
       return
     }
 
@@ -638,9 +638,14 @@ private func todayPeriod() -> String {
         guard let self else { return }
         self.updaterReadinessObservation?.invalidate()
         self.updaterReadinessObservation = nil
-        self.updaterController.checkForUpdates(nil)
+        self.presentUpdater(nil)
       }
     }
+  }
+
+  private func presentUpdater(_ sender: Any?) {
+    NSApplication.shared.activate(ignoringOtherApps: true)
+    updaterController.checkForUpdates(sender)
   }
 
   private func refresh() {
