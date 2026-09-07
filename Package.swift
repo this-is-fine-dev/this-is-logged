@@ -13,7 +13,7 @@ let package = Package(
     .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.9.2"),
   ],
   targets: [
-    .target(name: "ThisIsLoggedCore", linkerSettings: [.linkedLibrary("sqlite3")]),
+    .target(name: "ThisIsLoggedCore", linkerSettings: [.linkedLibrary("sqlite3"), .linkedFramework("EventKit")]),
     .executableTarget(
       name: "ThisIsLogged",
       dependencies: ["ThisIsLoggedCore", .product(name: "Sparkle", package: "Sparkle")],

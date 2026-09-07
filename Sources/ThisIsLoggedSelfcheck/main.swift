@@ -131,6 +131,16 @@ WORKDAY_HOURS=7,5
 precondition(legacy.source.url.absoluteString == "https://firma.atlassian.net")
 precondition(legacy.synchronizationEnabled && legacy.targetIssue == "AUT-1" && legacy.target?.token == "target=x")
 precondition(legacy.workdayHours == 7.5)
+precondition(!legacy.calendarIntegrationEnabled && legacy.calendarIdentifier.isEmpty && legacy.catchAllIssue == "RPR-18")
+var calendarSettings = legacy
+calendarSettings.calendarIntegrationEnabled = true
+do {
+  _ = try calendarSettings.validated()
+  preconditionFailure("Kalendarz bez wyboru powinien być odrzucony")
+} catch SettingsError.invalidCalendar {}
+calendarSettings.calendarIdentifier = "work-calendar"
+let validatedCalendarSettings = try calendarSettings.validated()
+precondition(validatedCalendarSettings.catchAllIssue == "RPR-18")
 
 var claudeOnlyChange = legacy
 claudeOnlyChange.claudeIntegrationEnabled = true
@@ -168,6 +178,12 @@ precondition(!FileManager.default.fileExists(atPath: ignoredFile.path))
 var activityCalendar = Calendar(identifier: .gregorian)
 activityCalendar.timeZone = .current
 let activityDay = activityCalendar.date(from: DateComponents(year: 2026, month: 9, day: 3, hour: 9))!
+let currentWorkRange = CalendarIntegration.workRange(
+  on: activityDay,
+  now: activityDay.addingTimeInterval(2 * 60 * 60),
+  workdayHours: 8
+)
+precondition(currentWorkRange?.duration == 3 * 60 * 60)
 func hook(_ event: String, session: String, text: String? = nil) -> Data {
   var value = ["hook_event_name": event, "session_id": session, "cwd": ""]
   if let text { value[event == "UserPromptSubmit" ? "prompt" : "last_assistant_message"] = text }
@@ -211,6 +227,35 @@ precondition(reading.allocations == [ActivityAllocation(issueKey: "READ-1", minu
 let normalized = try readingStore.activity(on: activityDay, now: activityDay.addingTimeInterval(60 * 60), targetMinutes: 60)
 precondition(normalized.allocations == [ActivityAllocation(issueKey: "READ-1", minutes: 60, evidence: 2)])
 precondition(normalized.observedMinutes == 40 && normalized.inferredMinutes == 20)
+let meeting = DateInterval(
+  start: activityDay.addingTimeInterval(15 * 60),
+  end: activityDay.addingTimeInterval(45 * 60)
+)
+let overlappingMeeting = DateInterval(
+  start: activityDay.addingTimeInterval(30 * 60),
+  end: activityDay.addingTimeInterval(60 * 60)
+)
+let calendarActivity = try readingStore.activity(
+  on: activityDay,
+  now: activityDay.addingTimeInterval(60 * 60),
+  targetMinutes: 60,
+  reservedIntervals: [meeting, overlappingMeeting],
+  fallbackIssue: "RPR-18"
+)
+precondition(calendarActivity.allocations == [
+  ActivityAllocation(issueKey: "RPR-18", minutes: 45, evidence: 2),
+  ActivityAllocation(issueKey: "READ-1", minutes: 15, evidence: 2),
+])
+precondition(calendarActivity.observedMinutes == 60 && calendarActivity.inferredMinutes == 0)
+let generalStore = ActivityStore(file: activityDirectory.appendingPathComponent("general.sqlite"))
+_ = try generalStore.recordClaudeHook(hook("UserPromptSubmit", session: "general", text: "Porozmawiajmy o architekturze"), now: activityDay)
+let generalActivity = try generalStore.activity(
+  on: activityDay,
+  now: activityDay.addingTimeInterval(60 * 60),
+  targetMinutes: 60,
+  fallbackIssue: "RPR-18"
+)
+precondition(generalActivity.allocations == [ActivityAllocation(issueKey: "RPR-18", minutes: 60, evidence: 1)])
 let liveStore = ActivityStore(file: activityDirectory.appendingPathComponent("live.sqlite"))
 _ = try liveStore.recordClaudeHook(hook("UserPromptSubmit", session: "live", text: "LIVE-1"), now: activityDay)
 let live = try liveStore.activity(on: activityDay, now: activityDay.addingTimeInterval(4 * 60))

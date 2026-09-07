@@ -22,6 +22,9 @@ public struct AppSettings: Equatable, Sendable {
   public var reminderTime: String
   public var workdayHours: Double
   public var claudeIntegrationEnabled: Bool
+  public var calendarIntegrationEnabled: Bool
+  public var calendarIdentifier: String
+  public var catchAllIssue: String
 
   public init(
     source: JiraCredentials,
@@ -32,7 +35,10 @@ public struct AppSettings: Equatable, Sendable {
     synchronizationTime: String = "23:00",
     reminderTime: String = "16:00",
     workdayHours: Double = 8,
-    claudeIntegrationEnabled: Bool = false
+    claudeIntegrationEnabled: Bool = false,
+    calendarIntegrationEnabled: Bool = false,
+    calendarIdentifier: String = "",
+    catchAllIssue: String = "RPR-18"
   ) {
     self.source = source
     self.synchronizationEnabled = synchronizationEnabled
@@ -43,12 +49,20 @@ public struct AppSettings: Equatable, Sendable {
     self.reminderTime = reminderTime
     self.workdayHours = workdayHours
     self.claudeIntegrationEnabled = claudeIntegrationEnabled
+    self.calendarIntegrationEnabled = calendarIntegrationEnabled
+    self.calendarIdentifier = calendarIdentifier
+    self.catchAllIssue = catchAllIssue
   }
 
   public func validated() throws -> Self {
     guard Self.validURL(source.url), !source.token.isEmpty else { throw SettingsError.invalidSource }
     if Self.isCloud(source.url), !source.email.contains("@") { throw SettingsError.sourceEmailRequired }
     guard Self.validClock(reminderTime), workdayHours > 0, workdayHours <= 24 else { throw SettingsError.invalidSchedule }
+    if claudeIntegrationEnabled || calendarIntegrationEnabled {
+      guard catchAllIssue.range(of: #"^[A-Z][A-Z0-9]*-\d+$"#, options: .regularExpression) != nil
+      else { throw SettingsError.invalidActivity }
+    }
+    if calendarIntegrationEnabled, calendarIdentifier.isEmpty { throw SettingsError.invalidCalendar }
     if synchronizationEnabled {
       guard let target, Self.validURL(target.url), !target.token.isEmpty,
             targetIssue.range(of: #"^[A-Z][A-Z0-9]*-\d+$"#, options: .regularExpression) != nil
@@ -94,6 +108,8 @@ public enum SettingsError: LocalizedError {
   case invalidTarget
   case targetEmailRequired
   case invalidSchedule
+  case invalidActivity
+  case invalidCalendar
 
   public var errorDescription: String? {
     switch self {
@@ -103,6 +119,8 @@ public enum SettingsError: LocalizedError {
     case .invalidTarget: "Uzupełnij URL, token i zadanie Jiry docelowej."
     case .targetEmailRequired: "Docelowa Jira Cloud wymaga emaila konta Atlassian."
     case .invalidSchedule: "Podaj godziny w formacie GG:MM i pełny dzień od 0 do 24 h."
+    case .invalidActivity: "Podaj poprawne zadanie zbiorcze, np. RPR-18."
+    case .invalidCalendar: "Wybierz kalendarz ze spotkaniami."
     }
   }
 }
@@ -125,6 +143,9 @@ public final class SettingsStore: @unchecked Sendable {
     var reminderTime: String
     var workdayHours: Double
     var claudeIntegrationEnabled: Bool?
+    var calendarIntegrationEnabled: Bool?
+    var calendarIdentifier: String?
+    var catchAllIssue: String?
   }
 
   private let file: URL
@@ -167,7 +188,10 @@ public final class SettingsStore: @unchecked Sendable {
       synchronizationTime: stored.synchronizationTime,
       reminderTime: stored.reminderTime,
       workdayHours: stored.workdayHours,
-      claudeIntegrationEnabled: stored.claudeIntegrationEnabled ?? false
+      claudeIntegrationEnabled: stored.claudeIntegrationEnabled ?? false,
+      calendarIntegrationEnabled: stored.calendarIntegrationEnabled ?? false,
+      calendarIdentifier: stored.calendarIdentifier ?? "",
+      catchAllIssue: stored.catchAllIssue ?? "RPR-18"
     )
   }
 
@@ -186,7 +210,10 @@ public final class SettingsStore: @unchecked Sendable {
       synchronizationTime: settings.synchronizationTime,
       reminderTime: settings.reminderTime,
       workdayHours: settings.workdayHours,
-      claudeIntegrationEnabled: settings.claudeIntegrationEnabled
+      claudeIntegrationEnabled: settings.claudeIntegrationEnabled,
+      calendarIntegrationEnabled: settings.calendarIntegrationEnabled,
+      calendarIdentifier: settings.calendarIdentifier,
+      catchAllIssue: settings.catchAllIssue
     )
     try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
     let temporary = file.deletingLastPathComponent().appendingPathComponent(".settings.\(UUID().uuidString).tmp")
@@ -222,7 +249,11 @@ public final class SettingsStore: @unchecked Sendable {
       commentIssueKeys: values["COMMENT_KEYS"] == "1",
       synchronizationTime: values["SYNC_TIME"] ?? "23:00",
       reminderTime: values["REMINDER_TIME"] ?? "16:00",
-      workdayHours: Double((values["WORKDAY_HOURS"] ?? "8").replacingOccurrences(of: ",", with: ".")) ?? 8
+      workdayHours: Double((values["WORKDAY_HOURS"] ?? "8").replacingOccurrences(of: ",", with: ".")) ?? 8,
+      claudeIntegrationEnabled: values["CLAUDE_ENABLED"] == "1",
+      calendarIntegrationEnabled: values["CALENDAR_ENABLED"] == "1",
+      calendarIdentifier: values["CALENDAR_ID"] ?? "",
+      catchAllIssue: values["CATCH_ALL_ISSUE"] ?? "RPR-18"
     )
   }
 }

@@ -24,7 +24,7 @@ import ThisIsLoggedCore
       backing: .buffered,
       defer: false
     )
-    panel.title = "Aktywność Claude Code"
+    panel.title = "Analiza czasu"
     panel.toolbarStyle = .unifiedCompact
     panel.toolbar = NSToolbar(identifier: "claude-activity")
     panel.titleVisibility = .hidden
@@ -112,21 +112,54 @@ import ThisIsLoggedCore
   }
 
   @objc private func reload() {
-    do {
-      let now = Date()
-      render(try store.activity(
-        on: datePicker.dateValue,
-        now: now,
-        targetMinutes: targetMinutes(for: datePicker.dateValue, now: now)
-      ))
-    } catch {
-      render(DailyActivity(day: "", events: [], allocations: []))
-      dayStatus.textColor = .systemRed
-      dayStatus.stringValue = "Nie udało się odczytać aktywności: \(error.localizedDescription)"
+    let date = datePicker.dateValue
+    let now = Date()
+    let target = targetMinutes(for: date, now: now)
+    let range = CalendarIntegration.workRange(on: date, now: now, workdayHours: settings.workdayHours)
+    let settings = settings
+    let store = store
+    Task.detached {
+      var meetings: [CalendarMeeting] = []
+      var calendarWarning: String?
+      if settings.calendarIntegrationEnabled, let range {
+        do {
+          meetings = try CalendarIntegration.meetings(
+            calendarIdentifier: settings.calendarIdentifier,
+            from: range.start,
+            to: range.end
+          )
+        } catch {
+          calendarWarning = error.localizedDescription
+        }
+      }
+      do {
+        let activity = try store.activity(
+          on: date,
+          now: now,
+          targetMinutes: target,
+          reservedIntervals: meetings.map(\.interval),
+          fallbackIssue: settings.catchAllIssue
+        )
+        await MainActor.run {
+          guard Calendar.current.isDate(self.datePicker.dateValue, inSameDayAs: date) else { return }
+          self.render(activity, meetings: meetings, calendarWarning: calendarWarning)
+        }
+      } catch {
+        await MainActor.run {
+          self.render(DailyActivity(day: "", events: [], allocations: []), meetings: meetings)
+          self.dayStatus.textColor = .systemRed
+          self.dayStatus.stringValue = "Nie udało się odczytać aktywności: \(error.localizedDescription)"
+        }
+      }
     }
   }
 
-  private func render(_ activity: DailyActivity, fetchTitles: Bool = true) {
+  private func render(
+    _ activity: DailyActivity,
+    meetings: [CalendarMeeting] = [],
+    calendarWarning: String? = nil,
+    fetchTitles: Bool = true
+  ) {
     rows.arrangedSubviews.forEach { rows.removeArrangedSubview($0); $0.removeFromSuperview() }
     allocationRows.removeAll()
     issueFields.removeAll()
@@ -137,13 +170,19 @@ import ThisIsLoggedCore
       label("Podstawa", header: true), label("Zakres sygnałów", header: true),
     ], widths: [330, 70, 90, 160]))
     for allocation in activity.allocations {
-      let evidence = allocation.evidence == 0 ? "bez wskazań" : "\(allocation.evidence) wskazań"
+      let meetingCount = allocation.issueKey == settings.catchAllIssue ? meetings.count : 0
+      let promptCount = max(0, allocation.evidence - meetingCount)
+      let evidence = [
+        meetingCount > 0 ? "\(meetingCount) spotk." : nil,
+        promptCount > 0 ? "\(promptCount) wsk." : nil,
+      ].compactMap { $0 }.joined(separator: " · ")
       let task = wrappingLabel(Self.taskLabel(allocation.issueKey, title: issueTitles[allocation.issueKey]))
       task.toolTip = task.stringValue
       issueFields[allocation.issueKey] = task
       let item = row([
         task, label(Self.duration(allocation.minutes)),
-        label(evidence), label(signalRange(for: allocation.issueKey, events: activity.events)),
+        label(evidence.isEmpty ? "bez wskazań" : evidence),
+        label(signalRange(for: allocation.issueKey, events: activity.events, meetings: meetings)),
       ], widths: [330, 70, 90, 160], alignment: .top)
       allocationRows.append(item)
       rows.addArrangedSubview(item)
@@ -152,6 +191,20 @@ import ThisIsLoggedCore
       let empty = label("Za mało aktywności, aby wyliczyć pierwsze 5 minut.")
       empty.textColor = .secondaryLabelColor
       rows.addArrangedSubview(empty)
+    }
+
+    if !meetings.isEmpty {
+      rows.addArrangedSubview(section("SPOTKANIA Z KALENDARZA · \(meetings.count)"))
+      rows.addArrangedSubview(row([
+        label("Spotkanie", header: true), label("Czas", header: true), label("Godziny", header: true),
+      ], widths: [470, 70, 120]))
+      for meeting in meetings {
+        rows.addArrangedSubview(row([
+          wrappingLabel(meeting.title),
+          label(Self.duration(Int((meeting.end.timeIntervalSince(meeting.start) / 60).rounded()))),
+          label("\(Self.timeFormatter.string(from: meeting.start))–\(Self.timeFormatter.string(from: meeting.end))"),
+        ], widths: [470, 70, 120], alignment: .top))
+      }
     }
 
     let separator = NSBox()
@@ -189,9 +242,10 @@ import ThisIsLoggedCore
     dayTotal.stringValue = "\(Self.duration(total)) / \(Self.duration(target)) h"
     dayTotal.textColor = total == target || target == 0 ? .labelColor : .systemOrange
     let sessions = Set(activity.events.map(\.sessionID)).count
-    dayStatus.textColor = .secondaryLabelColor
+    dayStatus.textColor = calendarWarning == nil ? .secondaryLabelColor : .systemOrange
     let estimate = activity.inferredMinutes > 0 ? " · +\(Self.duration(activity.inferredMinutes)) estymacji" : ""
-    dayStatus.stringValue = "\(sessions) sesji · \(activity.events.count) zdarzeń · \(Self.duration(activity.observedMinutes)) z aktywności\(estimate)"
+    let warning = calendarWarning.map { " · Kalendarz: \($0)" } ?? ""
+    dayStatus.stringValue = "\(sessions) sesji · \(activity.events.count) zdarzeń · \(Self.duration(activity.observedMinutes)) z aktywności\(estimate)\(warning)"
     resizeDocument()
     if fetchTitles { loadTitles(for: activity.allocations.map(\.issueKey)) }
   }
@@ -229,8 +283,10 @@ import ThisIsLoggedCore
     }
   }
 
-  private func signalRange(for issue: String, events: [ActivityEvent]) -> String {
-    let dates = events.filter { ($0.issueKey ?? "Nieprzypisane") == issue }.map(\.occurredAt)
+  private func signalRange(for issue: String, events: [ActivityEvent], meetings: [CalendarMeeting]) -> String {
+    var dates = events.filter { ($0.issueKey ?? settings.catchAllIssue) == issue }.map(\.occurredAt)
+    if issue == settings.catchAllIssue { dates += meetings.flatMap { [$0.start, $0.end] } }
+    dates.sort()
     guard let first = dates.first, let last = dates.last else { return "—" }
     let start = Self.timeFormatter.string(from: first)
     let end = Self.timeFormatter.string(from: last)

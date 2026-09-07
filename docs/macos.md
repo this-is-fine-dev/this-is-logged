@@ -11,7 +11,8 @@ ThisIsLogged --agent-reminder
 ThisIsLogged --agent-sync
 ```
 
-Żaden tryb nie otwiera Terminala. Interfejs korzysta z AppKit, a komunikacja z Jirą z `URLSession`.
+Żaden tryb nie otwiera Terminala. Interfejs korzysta z AppKit, komunikacja z Jirą z `URLSession`,
+a odczyt lokalnych spotkań z EventKit.
 
 ## Instalacja i aktualizacja
 
@@ -67,6 +68,13 @@ końcowego potwierdzenia.
 
 Kliknięcie akcji w powiadomieniu o kolizji otwiera to samo okno.
 
+## Kalendarz i analiza czasu
+
+Po włączeniu integracji aplikacja prosi macOS o dostęp, pokazuje lokalne kalendarze wraz z nazwą
+ich konta i zapisuje identyfikator wybranego kalendarza. Spotkania są odczytywane tylko w godzinach
+pracy, scalane przy nakładaniu i rezerwowane dla zadania zbiorczego przed estymacją aktywności Claude.
+Ten sam wynik jest używany w oknie **Analiza czasu…** i przez narzędzie MCP `review_day`.
+
 ## Powiadomienia
 
 Jeśli komunikat znika automatycznie:
@@ -119,3 +127,8 @@ Zapisz ustawienia ponownie. Aplikacja zatrzyma i usunie agent synchronizacji.
 ### Automatyzacja zgłasza różnicę
 
 Nic nie zostało nadpisane. Otwórz synchronizację interaktywną i wybierz decyzję dla wskazanego dnia.
+
+### Brak służbowego kalendarza na liście
+
+Sprawdź, czy konto służbowe jest widoczne w aplikacji Kalendarz, a następnie włącz dostęp dla
+This Is Logged w **Ustawienia systemowe → Prywatność i ochrona → Kalendarze**.

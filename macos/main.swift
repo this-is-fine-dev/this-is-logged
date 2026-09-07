@@ -286,6 +286,9 @@ private func readSettings() -> [String: String] {
       "REMINDER_TIME": settings.reminderTime,
       "WORKDAY_HOURS": String(settings.workdayHours),
       "CLAUDE_ENABLED": settings.claudeIntegrationEnabled ? "1" : "0",
+      "CALENDAR_ENABLED": settings.calendarIntegrationEnabled ? "1" : "0",
+      "CALENDAR_ID": settings.calendarIdentifier,
+      "CATCH_ALL_ISSUE": settings.catchAllIssue,
     ]
   }
   guard let text = try? String(contentsOf: configURL, encoding: .utf8) else { return [:] }
@@ -356,6 +359,9 @@ private func todayPeriod() -> String {
   private let reminderTimeField = NSTextField(frame: .zero)
   private let workdayHoursField = NSTextField(frame: .zero)
   private let claudeToggle = NSButton(checkboxWithTitle: "Zbieraj aktywność z Claude Code", target: nil, action: nil)
+  private let calendarToggle = NSButton(checkboxWithTitle: "Uwzględniaj spotkania z Kalendarza", target: nil, action: nil)
+  private let calendarPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+  private let catchAllIssueField = NSTextField(frame: .zero)
   private let settingsFeedback = NSTextField(labelWithString: " ")
   private let settingsProgress = NSProgressIndicator(frame: .zero)
   private var targetBox: NSBox!
@@ -371,6 +377,7 @@ private func todayPeriod() -> String {
   private var configuredReminderTime = savedSetting("REMINDER_TIME", fallback: environment["THIS_IS_LOGGED_REMINDER"] ?? "16:00")
   private var configuredWorkdayHours = savedSetting("WORKDAY_HOURS", fallback: environment["THIS_IS_LOGGED_WORKDAY_HOURS"] ?? "8")
   private var configuredClaudeEnabled = savedSetting("CLAUDE_ENABLED", fallback: "0") == "1"
+  private var configuredCalendarEnabled = savedSetting("CALENDAR_ENABLED", fallback: "0") == "1"
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     NSApp.mainMenu = makeMainMenu()
@@ -435,8 +442,8 @@ private func todayPeriod() -> String {
 
     menu.addItem(.separator())
     menu.addItem(sectionItem("APLIKACJA"))
-    if configuredClaudeEnabled {
-      menu.addItem(actionItem("Aktywność Claude Code…", #selector(showClaudeActivity), ""))
+    if configuredClaudeEnabled || configuredCalendarEnabled {
+      menu.addItem(actionItem("Analiza czasu…", #selector(showClaudeActivity), ""))
     }
     menu.addItem(actionItem("Ustawienia i połączenia…", #selector(showSettings), ","))
     let updateItem = NSMenuItem(
@@ -505,7 +512,7 @@ private func todayPeriod() -> String {
 
   private func setupSettingsPanel() {
     panel = NSPanel(
-      contentRect: NSRect(x: 0, y: 0, width: 590, height: 750),
+      contentRect: NSRect(x: 0, y: 0, width: 590, height: 850),
       styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
       backing: .buffered,
       defer: false
@@ -556,11 +563,11 @@ private func todayPeriod() -> String {
     header.addArrangedSubview(heading)
     root.addArrangedSubview(header)
 
-    for field in [sourceURLField, sourceEmailField, sourceTokenField, targetURLField, targetEmailField, targetTokenField, targetIssueField] {
+    for field in [sourceURLField, sourceEmailField, sourceTokenField, targetURLField, targetEmailField, targetTokenField, targetIssueField, catchAllIssueField] {
       field.widthAnchor.constraint(equalToConstant: 365).isActive = true
     }
     for field in [sourceURLField, sourceEmailField, sourceTokenField, targetURLField, targetEmailField, targetTokenField,
-                  targetIssueField, syncTimeField, reminderTimeField, workdayHoursField] {
+                  targetIssueField, syncTimeField, reminderTimeField, workdayHoursField, catchAllIssueField] {
       field.menu = makeTextEditingMenu()
     }
     sourceURLField.placeholderString = "https://firma.atlassian.net"
@@ -570,6 +577,7 @@ private func todayPeriod() -> String {
     targetEmailField.placeholderString = "Wymagany dla Jira Cloud; pusty dla Server/DC"
     targetTokenField.placeholderString = "API token lub Personal Access Token"
     targetIssueField.placeholderString = "AUT-123"
+    catchAllIssueField.placeholderString = "RPR-18"
     root.addArrangedSubview(settingsBox("Jira główna", [
       ("URL", sourceURLField), ("Email", sourceEmailField), ("Token", sourceTokenField),
     ]))
@@ -596,12 +604,18 @@ private func todayPeriod() -> String {
       ("Przypomnienie", reminderTimeField), ("Pełny dzień", hoursControl),
     ]))
 
-    let claudeDescription = NSTextField(labelWithString: "Hooki zapisują lokalnie wiadomości i narzędzia. MCP pozwala Claude przypisywać je do zadań.")
+    let claudeDescription = NSTextField(labelWithString: "Spotkania i rozmowy bez własnego zadania trafiają do zadania zbiorczego.")
     claudeDescription.textColor = .secondaryLabelColor
     claudeDescription.lineBreakMode = .byWordWrapping
     claudeDescription.maximumNumberOfLines = 2
     claudeDescription.widthAnchor.constraint(equalToConstant: 365).isActive = true
-    root.addArrangedSubview(settingsBox("Claude Code", [("", claudeToggle), ("", claudeDescription)]))
+    calendarToggle.target = self
+    calendarToggle.action = #selector(toggleCalendar)
+    calendarPopup.widthAnchor.constraint(equalToConstant: 365).isActive = true
+    root.addArrangedSubview(settingsBox("Analiza czasu", [
+      ("", claudeToggle), ("", calendarToggle), ("Kalendarz", calendarPopup),
+      ("Zadanie zbiorcze", catchAllIssueField), ("", claudeDescription),
+    ]))
 
     settingsFeedback.textColor = .secondaryLabelColor
     settingsFeedback.lineBreakMode = .byWordWrapping
@@ -618,6 +632,8 @@ private func todayPeriod() -> String {
     footer.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true
     syncToggle.state = configuredSyncEnabled ? .on : .off
     claudeToggle.state = configuredClaudeEnabled ? .on : .off
+    calendarToggle.state = configuredCalendarEnabled ? .on : .off
+    populateCalendars(selected: savedSetting("CALENDAR_ID", fallback: ""))
     toggleSynchronization()
   }
 
@@ -645,6 +661,40 @@ private func todayPeriod() -> String {
 
   @objc private func toggleSynchronization() {
     targetBox.isHidden = syncToggle.state != .on
+  }
+
+  @objc private func toggleCalendar() {
+    guard calendarToggle.state == .on else {
+      calendarPopup.isEnabled = false
+      return
+    }
+    Task {
+      do {
+        guard try await CalendarIntegration.requestAccess() else { throw CalendarIntegrationError.accessDenied }
+        populateCalendars(selected: calendarPopup.selectedItem?.representedObject as? String ?? "")
+        settingsFeedback.textColor = .secondaryLabelColor
+        settingsFeedback.stringValue = "Wybierz służbowy kalendarz i zapisz ustawienia."
+      } catch {
+        calendarToggle.state = .off
+        calendarPopup.isEnabled = false
+        settingsFeedback.textColor = .systemRed
+        settingsFeedback.stringValue = error.localizedDescription
+      }
+    }
+  }
+
+  private func populateCalendars(selected identifier: String) {
+    calendarPopup.removeAllItems()
+    let calendars = CalendarIntegration.calendars()
+    for calendar in calendars {
+      calendarPopup.addItem(withTitle: calendar.title)
+      calendarPopup.lastItem?.representedObject = calendar.identifier
+    }
+    if let index = calendarPopup.itemArray.firstIndex(where: { ($0.representedObject as? String) == identifier }) {
+      calendarPopup.selectItem(at: index)
+    }
+    if calendarPopup.numberOfItems == 0 { calendarPopup.addItem(withTitle: "Brak dostępu do kalendarzy") }
+    calendarPopup.isEnabled = calendarToggle.state == .on && !calendars.isEmpty
   }
 
   func menuWillOpen(_ menu: NSMenu) { refresh() }
@@ -960,6 +1010,9 @@ private func todayPeriod() -> String {
     reminderTimeField.stringValue = values["REMINDER_TIME"] ?? configuredReminderTime
     workdayHoursField.stringValue = values["WORKDAY_HOURS"] ?? configuredWorkdayHours
     claudeToggle.state = values["CLAUDE_ENABLED"] == "1" ? .on : .off
+    catchAllIssueField.stringValue = values["CATCH_ALL_ISSUE"] ?? "RPR-18"
+    calendarToggle.state = values["CALENDAR_ENABLED"] == "1" ? .on : .off
+    populateCalendars(selected: values["CALENDAR_ID"] ?? "")
     toggleSynchronization()
     settingsFeedback.textColor = .secondaryLabelColor
     settingsFeedback.stringValue = configurationComplete(values) ? "Zmiany zostaną sprawdzone w Jirze przed zapisem." : "Uzupełnij Jirę główną, aby uruchomić monitoring."
@@ -1010,6 +1063,7 @@ private func todayPeriod() -> String {
   @objc private func saveSettings() {
     let synchronization = syncToggle.state == .on
     let claudeIntegration = claudeToggle.state == .on
+    let calendarIntegration = calendarToggle.state == .on
     let sourceURL = normalizedURL(sourceURLField.stringValue)
     let targetURL = normalizedURL(targetURLField.stringValue)
     let sourceEmail = sourceEmailField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1017,6 +1071,8 @@ private func todayPeriod() -> String {
     let sourceToken = sourceTokenField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
     let targetToken = targetTokenField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
     let targetIssue = targetIssueField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+    let catchAllIssue = catchAllIssueField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+    let calendarIdentifier = calendarPopup.selectedItem?.representedObject as? String ?? ""
     let sync = syncTimeField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
     let reminder = reminderTimeField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
     let hoursText = workdayHoursField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: ",", with: ".")
@@ -1045,6 +1101,17 @@ private func todayPeriod() -> String {
       settingsFeedback.stringValue = "Docelowa Jira Cloud wymaga emaila konta Atlassian."
       return
     }
+    if (claudeIntegration || calendarIntegration) &&
+      catchAllIssue.range(of: #"^[A-Z][A-Z0-9]*-\d+$"#, options: .regularExpression) == nil {
+      settingsFeedback.textColor = .systemRed
+      settingsFeedback.stringValue = "Podaj poprawne zadanie zbiorcze, np. RPR-18."
+      return
+    }
+    if calendarIntegration && calendarIdentifier.isEmpty {
+      settingsFeedback.textColor = .systemRed
+      settingsFeedback.stringValue = "Nadaj dostęp i wybierz służbowy kalendarz."
+      return
+    }
     guard (!synchronization || clockParts(sync) != nil), clockParts(reminder) != nil,
           let hours = Double(hoursText), hours > 0, hours <= 24 else {
       settingsFeedback.textColor = .systemRed
@@ -1063,7 +1130,10 @@ private func todayPeriod() -> String {
       synchronizationTime: sync,
       reminderTime: reminder,
       workdayHours: hours,
-      claudeIntegrationEnabled: claudeIntegration
+      claudeIntegrationEnabled: claudeIntegration,
+      calendarIntegrationEnabled: calendarIntegration,
+      calendarIdentifier: calendarIdentifier,
+      catchAllIssue: catchAllIssue
     )
     let appURL = Bundle.main.bundleURL
     let settingsStore = SettingsStore()
@@ -1098,14 +1168,19 @@ private func todayPeriod() -> String {
           self.configuredReminderTime = reminder
           self.configuredWorkdayHours = String(hours)
           self.configuredClaudeEnabled = claudeIntegration
+          self.configuredCalendarEnabled = calendarIntegration
           self.activityWindow = nil
           self.setupMenu()
           self.saveButton.isEnabled = true
           self.settingsProgress.stopAnimation(nil)
           self.settingsFeedback.textColor = persistent ? .systemGreen : .systemOrange
-          self.settingsFeedback.stringValue = persistent
-            ? (claudeIntegration ? "Gotowe. Monitoring i Claude Code są aktywne." : "Gotowe. Monitoring uruchomiony.")
-            : "Gotowe. W powiadomieniach wybierz styl „Stałe”."
+          let successMessage = switch (claudeIntegration, calendarIntegration) {
+          case (true, true): "Gotowe. Monitoring, Claude Code i Kalendarz są aktywne."
+          case (true, false): "Gotowe. Monitoring i Claude Code są aktywne."
+          case (false, true): "Gotowe. Monitoring i Kalendarz są aktywne."
+          case (false, false): "Gotowe. Monitoring uruchomiony."
+          }
+          self.settingsFeedback.stringValue = persistent ? successMessage : "Gotowe. W powiadomieniach wybierz styl „Stałe”."
           if !persistent, let settings = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension") {
             NSWorkspace.shared.open(settings)
           }
@@ -1166,6 +1241,7 @@ private func todayPeriod() -> String {
 
   func layoutSelfcheck(syncEnabled: Bool) {
     configuredSyncEnabled = syncEnabled
+    configuredCalendarEnabled = true
     setupMenu()
     setupSettingsPanel()
     let header = item.menu?.items.first?.view
@@ -1174,14 +1250,19 @@ private func todayPeriod() -> String {
     let bounds = panel.contentView!.bounds
     let sourceFrame = panel.contentView!.convert(sourceURLField.bounds, from: sourceURLField)
     let syncFrame = panel.contentView!.convert(syncTimeField.bounds, from: syncTimeField)
+    let calendarFrame = panel.contentView!.convert(calendarPopup.bounds, from: calendarPopup)
+    let catchAllFrame = panel.contentView!.convert(catchAllIssueField.bounds, from: catchAllIssueField)
     let saveFrame = panel.contentView!.convert(saveButton.bounds, from: saveButton)
     precondition(
       item.menu?.minimumWidth == 410 && item.menu?.autoenablesItems == true && header?.frame.height == 96 &&
         headerMonthValue.frame.height > 0 && headerTodayValue.frame.height > 0 &&
         item.menu?.items.contains(where: { $0.attributedTitle?.string == "RAPORTY" }) == true &&
         item.menu?.items.contains(where: { $0.attributedTitle?.string == "SYNCHRONIZACJA" }) == syncEnabled &&
+        item.menu?.items.contains(where: { $0.title == "Analiza czasu…" }) == true &&
         bounds.contains(sourceFrame) && sourceFrame.height > 0 &&
         (!syncEnabled || bounds.contains(syncFrame) && syncFrame.height > 0) &&
+        bounds.contains(calendarFrame) && calendarFrame.height > 0 &&
+        bounds.contains(catchAllFrame) && catchAllFrame.height > 0 &&
         bounds.contains(saveFrame) && saveFrame.height > 0 && !panel.hidesOnDeactivate,
       "Opcje są poza widocznym obszarem"
     )
@@ -1259,7 +1340,8 @@ if let notify = arguments.firstIndex(of: "--notify"), arguments.indices.contains
     let capture = try ActivityStore().recordClaudeHook(FileHandle.standardInput.readDataToEndOfFile())
     if capture.eventName == "UserPromptSubmit" {
       let issue = capture.issueKey.map { " Automatycznie rozpoznane zadanie: \($0)." } ?? ""
-      let context = "This Is Logged zapisał wyłącznie bieżące polecenie jako \(capture.eventID).\(issue) Oceń tylko tę wiadomość, bez pobierania historii: jeśli to zwykła rozmowa lub szum, użyj discard_event; jeśli potrafisz wiarygodnie wskazać zadanie Jiry, użyj suggest_attribution; nie zgaduj."
+      let catchAll = (try? SettingsStore().loadDraft().catchAllIssue) ?? "RPR-18"
+      let context = "This Is Logged zapisał wyłącznie bieżące polecenie jako \(capture.eventID).\(issue) Oceń tylko tę wiadomość, bez pobierania historii: przypisz ją przez suggest_attribution do wiarygodnego zadania Jiry, a zwykłą rozmowę lub pracę ogólną do \(catchAll). Użyj discard_event wyłącznie dla technicznego testu, pomyłki lub wiadomości bez związku z pracą; nie zgaduj innego zadania."
       let response: [String: Any] = [
         "hookSpecificOutput": ["hookEventName": "UserPromptSubmit", "additionalContext": context]
       ]

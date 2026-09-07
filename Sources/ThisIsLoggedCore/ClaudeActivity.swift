@@ -158,40 +158,63 @@ public final class ActivityStore: @unchecked Sendable {
     }
   }
 
-  public func activity(on date: Date = Date(), now: Date = Date(), targetMinutes: Int? = nil) throws -> DailyActivity {
+  public func activity(
+    on date: Date = Date(),
+    now: Date = Date(),
+    targetMinutes: Int? = nil,
+    reservedIntervals: [DateInterval] = [],
+    fallbackIssue: String = "Nieprzypisane"
+  ) throws -> DailyActivity {
     let calendar = Calendar.current
     let start = calendar.startOfDay(for: date)
     let dayEnd = calendar.date(byAdding: .day, value: 1, to: start)!
     let end = min(dayEnd, max(start, now))
     let events = try events(from: start, to: end)
     let prompts = events.filter { $0.kind == "UserPromptSubmit" }
+    let reserved = Self.merged(reservedIntervals.compactMap { interval in
+      let clippedStart = max(start, interval.start)
+      let clippedEnd = min(end, interval.end)
+      return clippedStart < clippedEnd ? DateInterval(start: clippedStart, end: clippedEnd) : nil
+    })
     var seconds: [String: Double] = [:]
 
     for (index, prompt) in prompts.enumerated() {
       let nextPrompt = prompts.indices.contains(index + 1) ? prompts[index + 1].occurredAt : end
       let finish = min(nextPrompt, prompt.occurredAt.addingTimeInterval(30 * 60))
-      let duration = max(0, finish.timeIntervalSince(prompt.occurredAt))
-      let issue = prompt.issueKey ?? "Nieprzypisane"
+      let promptInterval = DateInterval(start: prompt.occurredAt, end: max(prompt.occurredAt, finish))
+      let occupied = reserved.reduce(0) { total, interval in
+        total + max(0, min(promptInterval.end, interval.end).timeIntervalSince(max(promptInterval.start, interval.start)))
+      }
+      let duration = max(0, promptInterval.duration - occupied)
+      let issue = prompt.issueKey ?? fallbackIssue
       if issue != Self.discardedIssue { seconds[issue, default: 0] += duration }
     }
 
     let trackedSeconds = seconds.values.reduce(0, +)
-    let observedUnits = trackedSeconds > 0 ? max(1, Int((trackedSeconds / 300).rounded())) : 0
-    let requestedUnits = targetMinutes.map { Int((Double(max(0, $0)) / 5).rounded()) } ?? observedUnits
+    let observedTaskUnits = trackedSeconds > 0 ? max(1, Int((trackedSeconds / 300).rounded())) : 0
+    let reservedUnits = Int((reserved.reduce(0) { $0 + $1.duration } / 300).rounded())
+    let requestedUnits = targetMinutes.map { Int((Double(max(0, $0)) / 5).rounded()) } ?? observedTaskUnits + reservedUnits
     let canInfer = seconds.keys.contains { $0 != "Nieprzypisane" }
-    let trackedUnits = canInfer ? max(observedUnits, requestedUnits) : observedUnits
+    let requestedTaskUnits = max(0, requestedUnits - reservedUnits)
+    let trackedTaskUnits = canInfer ? max(observedTaskUnits, requestedTaskUnits) : observedTaskUnits
     var units: [String: Int] = [:]
-    if trackedUnits > 0, trackedSeconds > 0 {
-      let shares = seconds.map { (key: $0.key, exact: $0.value / trackedSeconds * Double(trackedUnits)) }
+    if trackedTaskUnits > 0, trackedSeconds > 0 {
+      let shares = seconds.map { (key: $0.key, exact: $0.value / trackedSeconds * Double(trackedTaskUnits)) }
       for share in shares { units[share.key] = Int(floor(share.exact)) }
-      var left = trackedUnits - units.values.reduce(0, +)
+      var left = trackedTaskUnits - units.values.reduce(0, +)
       for share in shares.sorted(by: { ($0.exact - floor($0.exact)) > ($1.exact - floor($1.exact)) }) where left > 0 {
         units[share.key, default: 0] += 1
         left -= 1
       }
     }
+    if reservedUnits > 0 { units[fallbackIssue, default: 0] += reservedUnits }
     let allocations = units.filter { $0.value > 0 }.map { key, value in
-      ActivityAllocation(issueKey: key, minutes: value * 5, evidence: prompts.filter { ($0.issueKey ?? "Nieprzypisane") == key }.count)
+      let promptEvidence = prompts.filter { ($0.issueKey ?? fallbackIssue) == key }.count
+      return ActivityAllocation(
+        issueKey: key,
+        minutes: value * 5,
+        evidence: promptEvidence + (key == fallbackIssue ? reservedIntervals.count : 0)
+      )
     }.sorted { left, right in
       if left.issueKey == "Nieprzypisane" { return false }
       if right.issueKey == "Nieprzypisane" { return true }
@@ -201,9 +224,25 @@ public final class ActivityStore: @unchecked Sendable {
       day: Self.dayFormatter.string(from: start),
       events: events.filter { $0.issueKey != Self.discardedIssue },
       allocations: allocations,
-      observedMinutes: observedUnits * 5,
-      inferredMinutes: (trackedUnits - observedUnits) * 5
+      observedMinutes: (observedTaskUnits + reservedUnits) * 5,
+      inferredMinutes: (trackedTaskUnits - observedTaskUnits) * 5
     )
+  }
+
+  private static func merged(_ intervals: [DateInterval]) -> [DateInterval] {
+    let sorted = intervals.sorted { $0.start < $1.start }
+    guard var current = sorted.first else { return [] }
+    var result: [DateInterval] = []
+    for interval in sorted.dropFirst() {
+      if interval.start <= current.end {
+        current = DateInterval(start: current.start, end: max(current.end, interval.end))
+      } else {
+        result.append(current)
+        current = interval
+      }
+    }
+    result.append(current)
+    return result
   }
 
   private func events(from start: Date, to end: Date) throws -> [ActivityEvent] {
@@ -365,7 +404,7 @@ public struct ClaudeMCPServer: Sendable {
           "protocolVersion": params?["protocolVersion"] as? String ?? "2024-11-05",
           "capabilities": ["tools": [:]],
           "serverInfo": ["name": "this-is-logged", "version": "1.0"],
-          "instructions": "Classify only the current event when the hook asks. Discard noise, save confident Jira attribution, never fetch a whole day unless the user asks, and never write Jira worklogs.",
+          "instructions": "Classify only the current event when the hook asks. Save confident Jira attribution, use the configured catch-all issue for general work, discard only technical noise, never fetch a whole day unless the user asks, and never write Jira worklogs.",
         ]
       case "ping": result = [:]
       case "tools/list": result = ["tools": Self.tools]
@@ -410,12 +449,43 @@ public struct ClaudeMCPServer: Sendable {
       return toolResult(["saved": ids.count, "issue_key": issue.uppercased()])
     case "review_day":
       let day = try parseDay(arguments["date"] as? String)
-      let activity = try store.activity(on: day, targetMinutes: arguments["target_minutes"] as? Int)
+      let now = Date()
+      let settings = try? SettingsStore().loadDraft()
+      var meetings: [CalendarMeeting] = []
+      var calendarError: String?
+      if let settings, settings.calendarIntegrationEnabled,
+         let range = CalendarIntegration.workRange(on: day, now: now, workdayHours: settings.workdayHours) {
+        do {
+          meetings = try CalendarIntegration.meetings(
+            calendarIdentifier: settings.calendarIdentifier,
+            from: range.start,
+            to: range.end
+          )
+        } catch {
+          calendarError = error.localizedDescription
+        }
+      }
+      let activity = try store.activity(
+        on: day,
+        now: now,
+        targetMinutes: arguments["target_minutes"] as? Int,
+        reservedIntervals: meetings.map(\.interval),
+        fallbackIssue: settings?.catchAllIssue ?? "Nieprzypisane"
+      )
       let allocations = activity.allocations.map {
         ["issue_key": $0.issueKey, "minutes": $0.minutes, "evidence": $0.evidence]
       }
+      let calendarEntries = meetings.map {
+        [
+          "title": $0.title,
+          "start": ISO8601DateFormatter().string(from: $0.start),
+          "end": ISO8601DateFormatter().string(from: $0.end),
+          "minutes": Int(($0.end.timeIntervalSince($0.start) / 60).rounded()),
+        ] as [String: Any]
+      }
       return toolResult([
         "date": activity.day, "allocations": allocations,
+        "meetings": calendarEntries, "calendar_error": calendarError.map { $0 as Any } ?? NSNull(),
         "observed_minutes": activity.observedMinutes, "inferred_minutes": activity.inferredMinutes,
         "total_minutes": activity.allocations.reduce(0) { $0 + $1.minutes },
       ])
@@ -465,7 +535,7 @@ public struct ClaudeMCPServer: Sendable {
       ], "required": ["event_ids", "issue_key"]],
     ],
     [
-      "name": "review_day", "description": "Build a central 5-minute estimate from observed activity across all Claude Code worktrees.",
+      "name": "review_day", "description": "Build a central 5-minute estimate from Claude Code activity and the configured macOS calendar.",
       "inputSchema": ["type": "object", "properties": [
         "date": ["type": "string", "description": "Local date YYYY-MM-DD"],
         "target_minutes": ["type": "integer", "minimum": 0],

@@ -32,6 +32,7 @@ Awaria albo wyłączenie synchronizacji nie blokuje odczytu raportów z Jiry gł
 - cała konfiguracja dostępna w natywnym oknie aplikacji.
 - automatyczne aktualizacje przez Sparkle i GitHub Releases.
 - opcjonalne zbieranie aktywności Claude Code ze wszystkich worktree i inteligentna propozycja worklogów.
+- opcjonalne uwzględnianie spotkań z lokalnego Kalendarza macOS.
 
 ## Wymagania
 
@@ -40,6 +41,7 @@ Awaria albo wyłączenie synchronizacji nie blokuje odczytu raportów z Jiry gł
 - token do Jiry docelowej tylko przy synchronizacji;
 - bieżąca paczka jest budowana dla Apple Silicon.
 - Claude Code jest wymagany tylko po włączeniu integracji aktywności.
+- dostęp do Kalendarza jest wymagany tylko po włączeniu spotkań.
 
 ## Instalacja
 
@@ -94,7 +96,7 @@ każdej różnicy wybrać:
 
 Każdy zapis wymaga końcowego potwierdzenia.
 
-## Analiza aktywności Claude Code
+## Analiza czasu
 
 Opcję **Zbieraj aktywność z Claude Code** włącza się w ustawieniach aplikacji. Konfigurator sam:
 
@@ -102,9 +104,8 @@ Opcję **Zbieraj aktywność z Claude Code** włącza się w ustawieniach aplika
 - rejestruje globalny serwer MCP `this-is-logged` dla wszystkich projektów użytkownika;
 - pozwala agentom odczytać wspólną aktywność i zapisać sugestię przypisania do zadania Jiry.
 
-Menu **Aktywność Claude Code…** otwiera dzienny podgląd sesji ze wszystkich worktree. Branch lub
-treść w formacie `ABC-123` daje automatyczne przypisanie. Podział pokazuje wyłącznie czas wynikający
-z zebranych zdarzeń, zaokrąglony globalnie do 5 minut — aplikacja nie dopełnia go sztucznie do 8 h.
+Menu **Analiza czasu…** otwiera dzienny podgląd sesji ze wszystkich worktree. Branch lub
+treść w formacie `ABC-123` daje automatyczne przypisanie. Podział jest zaokrąglany globalnie do 5 minut.
 Odcinek trwa od wysłania polecenia do następnego polecenia, dzięki czemu obejmuje także czytanie
 odpowiedzi, analizę zmian i pisanie kolejnej wiadomości. Po 30 minutach bez kolejnej aktywności jest
 automatycznie zamykany.
@@ -118,7 +119,8 @@ nadal bierze udział w obliczeniu czasu, ale nie tworzy setek kontrolek w oknie.
 wyłącznie analitycznie: nie zawiera przycisku, kodu ani narzędzia MCP zapisującego worklogi do Jiry.
 
 Przy każdym nowym poleceniu Claude ocenia tylko bieżącą wiadomość, którą już ma w kontekście. Może
-przypisać ją do zadania albo usunąć jej treść jako szum, zachowując sam timestamp jako granicę czasu;
+przypisać ją do konkretnego zadania albo do skonfigurowanego zadania zbiorczego. Treść usuwa jako
+szum tylko dla testu technicznego, pomyłki lub wiadomości niezwiązanej z pracą;
 nie pobiera w tym celu dziennej historii. Aplikacja nie
 zapisuje odpowiedzi, narzędzi ani surowych payloadów, skraca polecenia do 1000 znaków i utrzymuje
 31-dniową retencję. Awaryjny odczyt MCP zwraca najwyżej 50 wpisów i po 500 znaków tekstu.
@@ -128,6 +130,17 @@ O ustawionej godzinie przypomnienia aplikacja dołącza informację o gotowej an
 
 MCP udostępnia cztery lokalne narzędzia: `get_activity`, `discard_event`, `suggest_attribution` i
 `review_day`. Wszystkie operują wyłącznie na lokalnym rejestrze aktywności.
+
+### Spotkania z Kalendarza macOS
+
+W ustawieniach można włączyć spotkania, wybrać służbowy kalendarz oraz zadanie zbiorcze, domyślnie
+`RPR-18`. macOS prosi wtedy o jednorazowy dostęp do kalendarza. Aplikacja czyta wyłącznie wydarzenia
+z wybranego kalendarza i nie modyfikuje ich.
+
+Do podziału czasu trafiają trwające i zakończone wydarzenia w godzinach pracy. Pomijane są wpisy
+całodniowe, anulowane, odrzucone, wolne i nieobecności. Nakładające się wydarzenia są scalane,
+a ich przedziały mają pierwszeństwo przed estymacją Claude, więc ten sam czas nie jest liczony dwa razy.
+Podsumowanie pokazuje nazwy, godziny i długość spotkań; cały ich czas trafia do zadania zbiorczego.
 
 ## Automatyzacja `launchd`
 
