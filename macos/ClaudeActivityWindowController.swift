@@ -146,12 +146,13 @@ import ThisIsLoggedCore
     separator.boxType = .separator
     separator.widthAnchor.constraint(equalToConstant: 686).isActive = true
     rows.addArrangedSubview(separator)
-    rows.addArrangedSubview(section("ZDARZENIA · TIMESTAMPY Z HOOKÓW"))
+    let displayedEvents = activity.events.suffix(50)
+    rows.addArrangedSubview(section("OSTATNIE ISTOTNE ZDARZENIA · \(displayedEvents.count) Z \(activity.events.count)"))
     rows.addArrangedSubview(row([
       label("Czas", header: true), label("Akcja", header: true),
       label("Kontekst", header: true), label("Szczegóły", header: true),
     ], widths: [70, 115, 130, 335]))
-    for event in activity.events {
+    for event in displayedEvents {
       rows.addArrangedSubview(row([
         label(Self.timeFormatter.string(from: event.occurredAt)), label(Self.eventName(event.kind)),
         label(event.issueKey ?? event.branch ?? "—"), label(Self.detail(event)),
@@ -161,6 +162,10 @@ import ThisIsLoggedCore
       let empty = label("Brak zdarzeń Claude Code dla tego dnia.")
       empty.textColor = .secondaryLabelColor
       rows.addArrangedSubview(empty)
+    } else if activity.events.count > displayedEvents.count {
+      let more = label("Starsze zdarzenia pominięto w widoku, ale nadal uwzględniono je w obliczeniu czasu.")
+      more.textColor = .secondaryLabelColor
+      rows.addArrangedSubview(more)
     }
 
     let formatter = DateFormatter()
@@ -225,17 +230,8 @@ import ThisIsLoggedCore
 
   private static func eventName(_ kind: String) -> String {
     switch kind {
-    case "SessionStart": "Start sesji"
     case "UserPromptSubmit": "Wiadomość"
-    case "MessageDisplay": "Odpowiedź"
-    case "PostToolUse": "Narzędzie"
     case "Stop": "Koniec odpowiedzi"
-    case "SubagentStart": "Start agenta"
-    case "SubagentStop": "Koniec agenta"
-    case "SessionEnd": "Koniec sesji"
-    case "CwdChanged": "Zmiana katalogu"
-    case "WorktreeCreate": "Nowy worktree"
-    case "WorktreeRemove": "Usunięcie worktree"
     default: kind
     }
   }

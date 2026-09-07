@@ -38,6 +38,11 @@ if rg -q 'ActivityJiraLogger|addWorklog|saveToJira' "$PROJECT_ROOT/macos/ClaudeA
   exit 1
 fi
 
+if ! rg -q 'activity\.events\.suffix\(50\)' "$PROJECT_ROOT/macos/ClaudeActivityWindowController.swift"; then
+  echo "Claude activity dashboard must keep its bounded event list" >&2
+  exit 1
+fi
+
 if rg -q 'Timer\.scheduledTimer\(timeInterval:.*#selector\(refresh\)' "$PROJECT_ROOT/macos/main.swift"; then
   echo "unsafe Timer selector for @MainActor refresh" >&2
   exit 1

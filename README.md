@@ -98,7 +98,7 @@ Każdy zapis wymaga końcowego potwierdzenia.
 
 Opcję **Zbieraj aktywność z Claude Code** włącza się w ustawieniach aplikacji. Konfigurator sam:
 
-- instaluje hooki Claude Code dla wiadomości użytkownika, odpowiedzi, narzędzi, sesji, subagentów i worktree;
+- instaluje dwa lekkie hooki: wiadomość użytkownika i koniec odpowiedzi;
 - rejestruje globalny serwer MCP `this-is-logged` dla wszystkich projektów użytkownika;
 - pozwala agentom odczytać wspólną aktywność i zapisać sugestię przypisania do zadania Jiry.
 
@@ -106,15 +106,20 @@ Menu **Aktywność Claude Code…** otwiera dzienny podgląd sesji ze wszystkich
 treść w formacie `ABC-123` daje automatyczne przypisanie. Podział pokazuje wyłącznie czas wynikający
 z zebranych zdarzeń, zaokrąglony globalnie do 5 minut — aplikacja nie dopełnia go sztucznie do 8 h.
 
-Niżej znajduje się pełna oś zdarzeń z timestampami `HH:mm:ss`, rodzajem hooka, kontekstem i
-szczegółami. Ten moduł działa wyłącznie analitycznie: nie zawiera przycisku, kodu ani narzędzia MCP
-zapisującego worklogi do Jiry.
+Niżej znajduje się oś ostatnich 50 istotnych zdarzeń z timestampami `HH:mm:ss`. Pełna liczba zdarzeń
+nadal bierze udział w obliczeniu czasu, ale nie tworzy setek kontrolek w oknie. Ten moduł działa
+wyłącznie analitycznie: nie zawiera przycisku, kodu ani narzędzia MCP zapisującego worklogi do Jiry.
+
+Przy każdym nowym poleceniu Claude ocenia tylko bieżącą wiadomość, którą już ma w kontekście. Może
+przypisać ją do zadania albo usunąć jako szum; nie pobiera w tym celu dziennej historii. Aplikacja nie
+zapisuje odpowiedzi, narzędzi ani surowych payloadów, skraca polecenia do 1000 znaków i utrzymuje
+31-dniową retencję. Awaryjny odczyt MCP zwraca najwyżej 50 wpisów i po 500 znaków tekstu.
 
 O ustawionej godzinie przypomnienia aplikacja dołącza informację o gotowej analizie dnia. Przycisk
 **Otwórz analizę** w powiadomieniu prowadzi bezpośrednio do dziennego podsumowania.
 
-MCP udostępnia trzy lokalne narzędzia: `get_activity`, `suggest_attribution` i `review_day`. Wszystkie
-operują wyłącznie na lokalnym rejestrze aktywności.
+MCP udostępnia cztery lokalne narzędzia: `get_activity`, `discard_event`, `suggest_attribution` i
+`review_day`. Wszystkie operują wyłącznie na lokalnym rejestrze aktywności.
 
 ## Automatyzacja `launchd`
 

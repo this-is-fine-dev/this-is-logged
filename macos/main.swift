@@ -382,6 +382,7 @@ private func todayPeriod() -> String {
     setupSettingsPanel()
     refresh()
     installAgentsIfNeeded()
+    refreshClaudeIntegrationIfNeeded()
     if arguments.contains("--show-panel") || !configurationComplete(readSettings()) { showSettings() }
     timer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
       Task { @MainActor in self?.refresh() }
@@ -1138,6 +1139,20 @@ private func todayPeriod() -> String {
     }
   }
 
+  private func refreshClaudeIntegrationIfNeeded() {
+    guard configuredClaudeEnabled, let executable = Bundle.main.executableURL,
+          let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
+          UserDefaults.standard.string(forKey: "claudeIntegrationVersion") != version else { return }
+    Task.detached {
+      do {
+        try ClaudeCodeIntegration().reconcile(enabled: true, executable: executable)
+        UserDefaults.standard.set(version, forKey: "claudeIntegrationVersion")
+      } catch {
+        fputs("claude migration: \(error.localizedDescription)\n", stderr)
+      }
+    }
+  }
+
   private func command(_ arguments: [String]) throws {
     let task = Process()
     task.executableURL = URL(fileURLWithPath: "/bin/launchctl")
@@ -1244,7 +1259,7 @@ if let notify = arguments.firstIndex(of: "--notify"), arguments.indices.contains
     let capture = try ActivityStore().recordClaudeHook(FileHandle.standardInput.readDataToEndOfFile())
     if capture.eventName == "UserPromptSubmit" {
       let issue = capture.issueKey.map { " Automatycznie rozpoznane zadanie: \($0)." } ?? ""
-      let context = "This Is Logged zapisał to polecenie jako zdarzenie \(capture.eventID).\(issue) Jeśli potrafisz wiarygodnie wskazać zadanie Jiry, użyj narzędzia suggest_attribution; nie zgaduj."
+      let context = "This Is Logged zapisał wyłącznie bieżące polecenie jako \(capture.eventID).\(issue) Oceń tylko tę wiadomość, bez pobierania historii: jeśli to zwykła rozmowa lub szum, użyj discard_event; jeśli potrafisz wiarygodnie wskazać zadanie Jiry, użyj suggest_attribution; nie zgaduj."
       let response: [String: Any] = [
         "hookSpecificOutput": ["hookEventName": "UserPromptSubmit", "additionalContext": context]
       ]

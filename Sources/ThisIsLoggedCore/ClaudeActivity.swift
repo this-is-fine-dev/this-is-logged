@@ -63,6 +63,7 @@ public enum ClaudeActivityError: LocalizedError {
 
 public final class ActivityStore: @unchecked Sendable {
   public static let defaultFile = SettingsStore.defaultDirectory.appendingPathComponent("activity.sqlite")
+  fileprivate static let capturedEventNames: Set<String> = ["UserPromptSubmit", "Stop"]
 
   private let file: URL
 
@@ -73,24 +74,20 @@ public final class ActivityStore: @unchecked Sendable {
     guard let payload = try JSONSerialization.jsonObject(with: data) as? [String: Any],
           let eventName = payload["hook_event_name"] as? String,
           let sessionID = payload["session_id"] as? String else { throw ClaudeActivityError.invalidHook }
+    guard Self.capturedEventNames.contains(eventName) else {
+      return HookCapture(eventID: "", eventName: eventName, issueKey: nil)
+    }
     let cwd = payload["cwd"] as? String ?? ""
-    let text = Self.eventText(payload)
-    let branch = ["SessionStart", "UserPromptSubmit", "CwdChanged"].contains(eventName)
-      ? Self.gitBranch(at: cwd) : nil
+    let text = (payload["prompt"] as? String).map { String($0.prefix(1_000)) }
+    let branch = eventName == "UserPromptSubmit" ? Self.gitBranch(at: cwd) : nil
     let issue = Self.issueKey(in: branch) ?? (eventName == "UserPromptSubmit" ? Self.issueKey(in: text) : nil)
     let id = UUID().uuidString
-    let messageKey = eventName == "MessageDisplay"
-      ? (payload["message_id"] as? String).map { "\(sessionID):\($0)" } : nil
-    let rawPayload = String(data: data, encoding: .utf8) ?? "{}"
 
     try withDatabase { database in
       let sql = """
         INSERT INTO activity_events
-          (id, occurred_at, session_id, kind, cwd, branch, issue_key, text, tool_name, payload, message_key)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(message_key) DO UPDATE SET
-          occurred_at = excluded.occurred_at,
-          payload = excluded.payload
+          (id, occurred_at, session_id, kind, cwd, branch, issue_key, text, payload)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, '{}')
         """
       var statement: OpaquePointer?
       guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else { throw databaseError(database) }
@@ -103,20 +100,26 @@ public final class ActivityStore: @unchecked Sendable {
       bind(branch, to: statement, at: 6)
       bind(issue, to: statement, at: 7)
       bind(text, to: statement, at: 8)
-      bind(payload["tool_name"] as? String, to: statement, at: 9)
-      bind(rawPayload, to: statement, at: 10)
-      bind(messageKey, to: statement, at: 11)
       guard sqlite3_step(statement) == SQLITE_DONE else { throw databaseError(database) }
-      if let messageKey, let text {
-        try storeMessageChunk(
-          text,
-          index: (payload["index"] as? NSNumber)?.intValue ?? 0,
-          messageKey: messageKey,
-          database: database
-        )
+      guard sqlite3_exec(database, "DELETE FROM activity_events WHERE occurred_at < strftime('%s','now','-31 days')", nil, nil, nil) == SQLITE_OK else {
+        throw databaseError(database)
       }
     }
     return HookCapture(eventID: id, eventName: eventName, issueKey: issue)
+  }
+
+  public func discard(eventID: String) throws -> Bool {
+    guard UUID(uuidString: eventID) != nil else { throw ClaudeActivityError.invalidHook }
+    return try withDatabase { database in
+      var statement: OpaquePointer?
+      guard sqlite3_prepare_v2(database, "DELETE FROM activity_events WHERE id = ?", -1, &statement, nil) == SQLITE_OK else {
+        throw databaseError(database)
+      }
+      defer { sqlite3_finalize(statement) }
+      bind(eventID, to: statement, at: 1)
+      guard sqlite3_step(statement) == SQLITE_DONE else { throw databaseError(database) }
+      return sqlite3_changes(database) == 1
+    }
   }
 
   public func suggest(eventIDs: [String], issueKey: String, summary: String = "", confidence: Double = 1) throws {
@@ -191,7 +194,9 @@ public final class ActivityStore: @unchecked Sendable {
         SELECT e.id, e.occurred_at, e.session_id, e.kind, e.cwd, e.branch,
           COALESCE((SELECT a.issue_key FROM activity_attributions a WHERE a.event_id = e.id ORDER BY a.occurred_at DESC LIMIT 1), e.issue_key),
           e.text, e.tool_name
-        FROM activity_events e WHERE e.occurred_at >= ? AND e.occurred_at < ? ORDER BY e.occurred_at
+        FROM activity_events e
+        WHERE e.occurred_at >= ? AND e.occurred_at < ? AND e.kind IN ('UserPromptSubmit', 'Stop')
+        ORDER BY e.occurred_at
         """
       var statement: OpaquePointer?
       guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else { throw databaseError(database) }
@@ -233,7 +238,24 @@ public final class ActivityStore: @unchecked Sendable {
     sqlite3_busy_timeout(database, 5_000)
     guard sqlite3_exec(database, "PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;", nil, nil, nil) == SQLITE_OK,
           sqlite3_exec(database, Self.schema, nil, nil, nil) == SQLITE_OK else { throw databaseError(database) }
+    try migrate(database)
     return try body(database)
+  }
+
+  private func migrate(_ database: OpaquePointer) throws {
+    var statement: OpaquePointer?
+    guard sqlite3_prepare_v2(database, "PRAGMA user_version", -1, &statement, nil) == SQLITE_OK else { throw databaseError(database) }
+    guard sqlite3_step(statement) == SQLITE_ROW else { sqlite3_finalize(statement); throw databaseError(database) }
+    let version = sqlite3_column_int(statement, 0)
+    sqlite3_finalize(statement)
+    guard version < 1 else { return }
+    let cleanup = """
+      DELETE FROM activity_events WHERE kind NOT IN ('UserPromptSubmit', 'Stop');
+      UPDATE activity_events SET payload = '{}', text = substr(text, 1, 1000);
+      VACUUM;
+      PRAGMA user_version = 1;
+      """
+    guard sqlite3_exec(database, cleanup, nil, nil, nil) == SQLITE_OK else { throw databaseError(database) }
   }
 
   private static let schema = """
@@ -243,10 +265,6 @@ public final class ActivityStore: @unchecked Sendable {
       message_key TEXT UNIQUE
     );
     CREATE INDEX IF NOT EXISTS activity_events_time ON activity_events(occurred_at);
-    CREATE TABLE IF NOT EXISTS activity_message_chunks (
-      message_key TEXT NOT NULL REFERENCES activity_events(message_key) ON DELETE CASCADE,
-      chunk_index INTEGER NOT NULL, text TEXT NOT NULL, PRIMARY KEY(message_key, chunk_index)
-    );
     CREATE TABLE IF NOT EXISTS activity_attributions (
       id TEXT PRIMARY KEY, event_id TEXT NOT NULL REFERENCES activity_events(id) ON DELETE CASCADE,
       occurred_at REAL NOT NULL, issue_key TEXT NOT NULL, summary TEXT NOT NULL, confidence REAL NOT NULL
@@ -260,15 +278,6 @@ public final class ActivityStore: @unchecked Sendable {
     formatter.dateFormat = "yyyy-MM-dd"
     return formatter
   }()
-
-  private static func eventText(_ payload: [String: Any]) -> String? {
-    for key in ["prompt", "delta", "last_assistant_message", "message"] {
-      if let text = payload[key] as? String, !text.isEmpty { return text }
-    }
-    if let input = payload["tool_input"], JSONSerialization.isValidJSONObject(input),
-       let data = try? JSONSerialization.data(withJSONObject: input), let text = String(data: data, encoding: .utf8) { return text }
-    return nil
-  }
 
   public static func issueKey(in value: String?) -> String? {
     guard let value,
@@ -294,32 +303,6 @@ public final class ActivityStore: @unchecked Sendable {
 
   private func databaseError(_ database: OpaquePointer) -> ClaudeActivityError {
     .database(String(cString: sqlite3_errmsg(database)))
-  }
-
-  private func storeMessageChunk(_ text: String, index: Int, messageKey: String, database: OpaquePointer) throws {
-    var statement: OpaquePointer?
-    let insert = "INSERT OR REPLACE INTO activity_message_chunks (message_key, chunk_index, text) VALUES (?, ?, ?)"
-    guard sqlite3_prepare_v2(database, insert, -1, &statement, nil) == SQLITE_OK else { throw databaseError(database) }
-    bind(messageKey, to: statement, at: 1)
-    sqlite3_bind_int64(statement, 2, sqlite3_int64(index))
-    bind(text, to: statement, at: 3)
-    let inserted = sqlite3_step(statement)
-    sqlite3_finalize(statement)
-    guard inserted == SQLITE_DONE else { throw databaseError(database) }
-
-    let update = """
-      UPDATE activity_events SET text = (
-        SELECT group_concat(text, '') FROM (
-          SELECT text FROM activity_message_chunks WHERE message_key = ? ORDER BY chunk_index
-        )
-      ) WHERE message_key = ?
-      """
-    statement = nil
-    guard sqlite3_prepare_v2(database, update, -1, &statement, nil) == SQLITE_OK else { throw databaseError(database) }
-    defer { sqlite3_finalize(statement) }
-    bind(messageKey, to: statement, at: 1)
-    bind(messageKey, to: statement, at: 2)
-    guard sqlite3_step(statement) == SQLITE_DONE else { throw databaseError(database) }
   }
 
   private func bind(_ value: String?, to statement: OpaquePointer?, at index: Int32) {
@@ -364,7 +347,7 @@ public struct ClaudeMCPServer: Sendable {
           "protocolVersion": params?["protocolVersion"] as? String ?? "2024-11-05",
           "capabilities": ["tools": [:]],
           "serverInfo": ["name": "this-is-logged", "version": "1.0"],
-          "instructions": "Read the local Claude Code activity, infer Jira attribution, and save suggestions. Never invent task keys or write Jira worklogs.",
+          "instructions": "Classify only the current event when the hook asks. Discard noise, save confident Jira attribution, never fetch a whole day unless the user asks, and never write Jira worklogs.",
         ]
       case "ping": result = [:]
       case "tools/list": result = ["tools": Self.tools]
@@ -384,14 +367,18 @@ public struct ClaudeMCPServer: Sendable {
     case "get_activity":
       let day = try parseDay(arguments["date"] as? String)
       let activity = try store.activity(on: day)
-      let entries = activity.events.suffix(min(arguments["limit"] as? Int ?? 200, 1_000)).map { event in
+      let limit = min(max(arguments["limit"] as? Int ?? 20, 1), 50)
+      let entries = activity.events.suffix(limit).map { event in
         [
           "id": event.id, "at": ISO8601DateFormatter().string(from: event.occurredAt), "kind": event.kind,
           "cwd": event.cwd, "branch": event.branch ?? NSNull(), "issue_key": event.issueKey ?? NSNull(),
-          "text": event.text ?? NSNull(), "tool": event.toolName ?? NSNull(),
+          "text": event.text.map { String($0.prefix(500)) } ?? NSNull(),
         ] as [String: Any]
       }
       return toolResult(["date": activity.day, "events": entries])
+    case "discard_event":
+      guard let eventID = arguments["event_id"] as? String else { throw ClaudeActivityError.invalidHook }
+      return toolResult(["discarded": try store.discard(eventID: eventID)])
     case "suggest_attribution":
       guard let ids = arguments["event_ids"] as? [String], let issue = arguments["issue_key"] as? String else {
         throw ClaudeActivityError.invalidHook
@@ -435,11 +422,17 @@ public struct ClaudeMCPServer: Sendable {
 
   private static var tools: [[String: Any]] { [
     [
-      "name": "get_activity", "description": "Read locally captured Claude Code messages and tool activity for a day.",
+      "name": "get_activity", "description": "Read a small recent slice of locally captured Claude Code prompts and stop markers.",
       "inputSchema": ["type": "object", "properties": [
         "date": ["type": "string", "description": "Local date YYYY-MM-DD"],
-        "limit": ["type": "integer", "minimum": 1, "maximum": 1_000],
+        "limit": ["type": "integer", "minimum": 1, "maximum": 50],
       ]],
+    ],
+    [
+      "name": "discard_event", "description": "Delete the current prompt when it is only chatter, status checking, or other noise unrelated to work analysis.",
+      "inputSchema": ["type": "object", "properties": [
+        "event_id": ["type": "string"],
+      ], "required": ["event_id"]],
     ],
     [
       "name": "suggest_attribution", "description": "Attribute captured activity events to a Jira issue. UserPromptSubmit event IDs affect the time proposal; this only saves a local suggestion.",
@@ -488,7 +481,7 @@ public struct ClaudeCodeIntegration: Sendable {
   public func hooksSettings(from existing: [String: Any], command: String, enabled: Bool) -> [String: Any] {
     var settings = existing
     var hooks = settings["hooks"] as? [String: Any] ?? [:]
-    for event in Self.events {
+    for event in Self.managedEvents {
       let groups = hooks[event] as? [[String: Any]] ?? []
       let cleaned = groups.compactMap { group -> [String: Any]? in
         var group = group
@@ -499,7 +492,7 @@ public struct ClaudeCodeIntegration: Sendable {
         group["hooks"] = commands
         return group
       }
-      let updated = enabled ? cleaned + [[
+      let updated = enabled && ActivityStore.capturedEventNames.contains(event) ? cleaned + [[
         "matcher": "",
         "hooks": [["type": "command", "command": command, "timeout": 10, "async": event != "UserPromptSubmit"]],
       ]] : cleaned
@@ -527,7 +520,7 @@ public struct ClaudeCodeIntegration: Sendable {
             object["permissions"] == nil || object["permissions"] is [String: Any]
       else { throw ClaudeActivityError.invalidClaudeSettings }
       let hooks = object["hooks"] as? [String: Any] ?? [:]
-      guard Self.events.allSatisfy({ hooks[$0] == nil || hooks[$0] is [[String: Any]] }) else {
+      guard Self.managedEvents.allSatisfy({ hooks[$0] == nil || hooks[$0] is [[String: Any]] }) else {
         throw ClaudeActivityError.invalidClaudeSettings
       }
       let permissions = object["permissions"] as? [String: Any] ?? [:]
@@ -571,12 +564,13 @@ public struct ClaudeCodeIntegration: Sendable {
     return text
   }
 
-  private static let events = [
+  private static let managedEvents = [
     "SessionStart", "UserPromptSubmit", "MessageDisplay", "PostToolUse", "Stop",
     "SubagentStart", "SubagentStop", "SessionEnd", "CwdChanged", "WorktreeCreate", "WorktreeRemove",
   ]
   private static let permissionRules = [
     "mcp__this-is-logged__get_activity",
+    "mcp__this-is-logged__discard_event",
     "mcp__this-is-logged__suggest_attribution",
     "mcp__this-is-logged__review_day",
   ]

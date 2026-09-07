@@ -162,6 +162,9 @@ try FileManager.default.removeItem(at: settingsDirectory)
 
 let activityDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
 let activityStore = ActivityStore(file: activityDirectory.appendingPathComponent("activity.sqlite"))
+let ignoredFile = activityDirectory.appendingPathComponent("ignored.sqlite")
+_ = try ActivityStore(file: ignoredFile).recordClaudeHook(Data(#"{"hook_event_name":"PostToolUse","session_id":"noise","tool_input":{"large":"payload"}}"#.utf8))
+precondition(!FileManager.default.fileExists(atPath: ignoredFile.path))
 var activityCalendar = Calendar(identifier: .gregorian)
 activityCalendar.timeZone = .current
 let activityDay = activityCalendar.date(from: DateComponents(year: 2026, month: 9, day: 3, hour: 9))!
@@ -184,8 +187,8 @@ _ = try activityStore.recordClaudeHook(firstChunk, now: activityDay.addingTimeIn
 _ = try activityStore.recordClaudeHook(secondChunk, now: activityDay.addingTimeInterval(71 * 60))
 try activityStore.suggest(eventIDs: [secondActivity.eventID], issueKey: "DEF-2", summary: "Formularz", confidence: 0.9)
 let activity = try activityStore.activity(on: activityDay)
-precondition(firstActivity.issueKey == "ABC-123" && activity.events.count == 5)
-precondition(activity.events.first { $0.kind == "MessageDisplay" }?.text == "Hello world")
+precondition(firstActivity.issueKey == "ABC-123" && activity.events.count == 4)
+precondition(activity.events.allSatisfy { ["UserPromptSubmit", "Stop"].contains($0.kind) })
 precondition(activity.allocations.reduce(0) { $0 + $1.minutes } == 30)
 precondition(activity.allocations.allSatisfy { $0.minutes % 5 == 0 })
 precondition(activity.allocations.contains { $0.issueKey == "ABC-123" })
@@ -203,6 +206,24 @@ let liveStore = ActivityStore(file: activityDirectory.appendingPathComponent("li
 _ = try liveStore.recordClaudeHook(hook("UserPromptSubmit", session: "live", text: "LIVE-1"), now: activityDay)
 let live = try liveStore.activity(on: activityDay, now: activityDay.addingTimeInterval(4 * 60))
 precondition(live.allocations == [ActivityAllocation(issueKey: "LIVE-1", minutes: 5, evidence: 1)])
+let disposable = try liveStore.recordClaudeHook(hook("UserPromptSubmit", session: "noise", text: "hej"), now: activityDay.addingTimeInterval(5 * 60))
+let discarded = try liveStore.discard(eventID: disposable.eventID)
+let afterDiscard = try liveStore.activity(on: activityDay)
+precondition(discarded && afterDiscard.events.allSatisfy { $0.id != disposable.eventID })
+
+let compactStore = ActivityStore(file: activityDirectory.appendingPathComponent("compact.sqlite"))
+_ = try compactStore.recordClaudeHook(
+  hook("UserPromptSubmit", session: "compact", text: "CMP-1 " + String(repeating: "x", count: 10_000)),
+  now: activityDay
+)
+let compactMCP = ClaudeMCPServer(store: compactStore)
+let compactResponse = compactMCP.response(to: [
+  "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+  "params": ["name": "get_activity", "arguments": ["date": "2026-09-03", "limit": 1_000]],
+])!
+let compactData = try JSONSerialization.data(withJSONObject: compactResponse)
+let compactActivity = try compactStore.activity(on: activityDay)
+precondition(compactData.count < 4_000 && compactActivity.events.first?.text?.count == 1_000)
 
 let integration = ClaudeCodeIntegration(home: activityDirectory)
 let existingHooks: [String: Any] = ["hooks": [
@@ -212,7 +233,9 @@ let existingHooks: [String: Any] = ["hooks": [
 let installedHooks = integration.hooksSettings(from: existingHooks, command: "new --ingest-claude-hook", enabled: true)
 let installedJSON = String(data: try JSONSerialization.data(withJSONObject: installedHooks), encoding: .utf8)!
 precondition(installedJSON.contains("custom-hook") && installedJSON.contains("new --ingest-claude-hook") && !installedJSON.contains("old --ingest-claude-hook"))
+precondition(!installedJSON.contains("MessageDisplay") && !installedJSON.contains("PostToolUse"))
 precondition(installedJSON.contains("mcp__this-is-logged__get_activity"))
+precondition(installedJSON.contains("mcp__this-is-logged__discard_event"))
 let removedHooks = integration.hooksSettings(from: installedHooks, command: "", enabled: false)
 let removedJSON = String(data: try JSONSerialization.data(withJSONObject: removedHooks), encoding: .utf8)!
 precondition(removedJSON.contains("custom-hook") && !removedJSON.contains("--ingest-claude-hook"))
@@ -221,7 +244,7 @@ precondition(!removedJSON.contains("mcp__this-is-logged__get_activity"))
 let mcp = ClaudeMCPServer(store: activityStore)
 let mcpResponse = mcp.response(to: ["jsonrpc": "2.0", "id": 1, "method": "tools/list"])
 let mcpTools = ((mcpResponse?["result"] as? [String: Any])?["tools"] as? [[String: Any]]) ?? []
-precondition(mcpTools.map { $0["name"] as? String }.compactMap { $0 } == ["get_activity", "suggest_attribution", "review_day"])
+precondition(mcpTools.map { $0["name"] as? String }.compactMap { $0 } == ["get_activity", "discard_event", "suggest_attribution", "review_day"])
 try FileManager.default.removeItem(at: activityDirectory)
 
 let configuration = URLSessionConfiguration.ephemeral
