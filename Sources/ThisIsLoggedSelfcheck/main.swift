@@ -183,17 +183,26 @@ let secondChunk = try JSONSerialization.data(withJSONObject: [
 _ = try activityStore.recordClaudeHook(firstChunk, now: activityDay.addingTimeInterval(70 * 60))
 _ = try activityStore.recordClaudeHook(secondChunk, now: activityDay.addingTimeInterval(71 * 60))
 try activityStore.suggest(eventIDs: [secondActivity.eventID], issueKey: "DEF-2", summary: "Formularz", confidence: 0.9)
-let activity = try activityStore.activity(on: activityDay, targetMinutes: 60)
+let activity = try activityStore.activity(on: activityDay)
 precondition(firstActivity.issueKey == "ABC-123" && activity.events.count == 5)
 precondition(activity.events.first { $0.kind == "MessageDisplay" }?.text == "Hello world")
-precondition(activity.allocations.reduce(0) { $0 + $1.minutes } == 60)
+precondition(activity.allocations.reduce(0) { $0 + $1.minutes } == 30)
 precondition(activity.allocations.allSatisfy { $0.minutes % 5 == 0 })
 precondition(activity.allocations.contains { $0.issueKey == "ABC-123" })
 precondition(activity.allocations.contains { $0.issueKey == "DEF-2" })
-precondition(activity.allocations.contains { $0.issueKey == "Nieprzypisane" })
-try activityStore.saveReview(day: activity.day, status: .rejected, allocations: activity.allocations)
-let savedReview = try activityStore.review(day: activity.day)
-precondition(savedReview?.status == .rejected && savedReview?.allocations == activity.allocations)
+
+let burstStore = ActivityStore(file: activityDirectory.appendingPathComponent("burst.sqlite"))
+for index in 0..<6 {
+  let prompt = activityDay.addingTimeInterval(Double(index * 60))
+  _ = try burstStore.recordClaudeHook(hook("UserPromptSubmit", session: "burst-\(index)", text: "ABC-123"), now: prompt)
+  _ = try burstStore.recordClaudeHook(hook("Stop", session: "burst-\(index)"), now: prompt.addingTimeInterval(50))
+}
+let burst = try burstStore.activity(on: activityDay)
+precondition(burst.allocations.first { $0.issueKey == "ABC-123" }?.minutes == 5)
+let liveStore = ActivityStore(file: activityDirectory.appendingPathComponent("live.sqlite"))
+_ = try liveStore.recordClaudeHook(hook("UserPromptSubmit", session: "live", text: "LIVE-1"), now: activityDay)
+let live = try liveStore.activity(on: activityDay, now: activityDay.addingTimeInterval(4 * 60))
+precondition(live.allocations == [ActivityAllocation(issueKey: "LIVE-1", minutes: 5, evidence: 1)])
 
 let integration = ClaudeCodeIntegration(home: activityDirectory)
 let existingHooks: [String: Any] = ["hooks": [
@@ -265,26 +274,6 @@ Task.detached {
     let interactive = try await engine.execute(plan, actions: [LocalDay("2026-09-01")!: .replace])
     let deleted = await targetJira.deleted
     precondition(interactive.writtenDays == 2 && deleted == ["old-1"])
-
-    let activityJira = FakeJira(user: "activity")
-    let activityResult = try await ActivityJiraLogger(jira: activityJira).log(activity)
-    precondition(activityResult.writtenIssues == 2 && activityResult.skippedIssues == 0 && activityResult.writtenMinutes == 30)
-    let activityAdded = await activityJira.added
-    precondition(activityAdded.count == 2)
-    let conflictingJira = FakeJira(user: "activity", issue: [LocalDay("2026-09-03")!: DayTotal(seconds: 300)])
-    do {
-      _ = try await ActivityJiraLogger(jira: conflictingJira).log(activity)
-      preconditionFailure("activity conflict should stop the write")
-    } catch is ActivityLoggingError {}
-    let conflictingAdded = await conflictingJira.added
-    precondition(conflictingAdded.isEmpty)
-    let overflowingJira = FakeJira(user: "activity", daily: [LocalDay("2026-09-03")!: DayTotal(seconds: 40 * 60)])
-    do {
-      _ = try await ActivityJiraLogger(jira: overflowingJira).log(activity)
-      preconditionFailure("daily overflow should stop the write")
-    } catch is ActivityLoggingError {}
-    let overflowingAdded = await overflowingJira.added
-    precondition(overflowingAdded.isEmpty)
 
     let cacheDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     let cache = SnapshotStore(file: cacheDirectory.appendingPathComponent("status.json"))

@@ -94,7 +94,7 @@ każdej różnicy wybrać:
 
 Każdy zapis wymaga końcowego potwierdzenia.
 
-## Claude Code i automatyczne worklogi
+## Analiza aktywności Claude Code
 
 Opcję **Zbieraj aktywność z Claude Code** włącza się w ustawieniach aplikacji. Konfigurator sam:
 
@@ -102,26 +102,19 @@ Opcję **Zbieraj aktywność z Claude Code** włącza się w ustawieniach aplika
 - rejestruje globalny serwer MCP `this-is-logged` dla wszystkich projektów użytkownika;
 - pozwala agentom odczytać wspólną aktywność i zapisać sugestię przypisania do zadania Jiry.
 
-Menu **Aktywność Claude Code…** otwiera dzienne podsumowanie sesji ze wszystkich worktree. Każdy
-proponowany raport można zatwierdzić albo odrzucić oraz poprawić jego zadanie i czas. Można też dodać
-brakujący raport ręcznie. Branch lub treść w formacie `ABC-123` daje automatyczne przypisanie.
-Pozostały czas ma nazwę **Nieprzypisane** — aplikacja nigdy nie wymyśla zadania tylko po to, aby
-domknąć 8 h.
+Menu **Aktywność Claude Code…** otwiera dzienny podgląd sesji ze wszystkich worktree. Branch lub
+treść w formacie `ABC-123` daje automatyczne przypisanie. Podział pokazuje wyłącznie czas wynikający
+z zebranych zdarzeń, zaokrąglony globalnie do 5 minut — aplikacja nie dopełnia go sztucznie do 8 h.
 
-Podział jest zaokrąglany globalnie do 5 minut. W zwykły dzień suma propozycji wraz z czasem
-nieprzypisanym odpowiada ustawionej normie. W weekend aplikacja pokazuje wyłącznie oszacowaną
-aktywność, bez sztucznego dopełniania do 8 h.
-
-Przycisk **Zapisz zatwierdzone w Jirze** pokazuje końcowe podsumowanie i zapisuje wyłącznie
-zaakceptowane pozycje do Jiry głównej. Decyzja zostaje zapamiętana lokalnie dla wybranego dnia.
-Przed pierwszym zapisem sprawdzane są istniejące worklogi. Zgodne są pomijane, a konflikt zatrzymuje
-operację bez nadpisywania.
+Niżej znajduje się pełna oś zdarzeń z timestampami `HH:mm:ss`, rodzajem hooka, kontekstem i
+szczegółami. Ten moduł działa wyłącznie analitycznie: nie zawiera przycisku, kodu ani narzędzia MCP
+zapisującego worklogi do Jiry.
 
 O ustawionej godzinie przypomnienia aplikacja dołącza informację o gotowej analizie dnia. Przycisk
 **Otwórz analizę** w powiadomieniu prowadzi bezpośrednio do dziennego podsumowania.
 
-MCP udostępnia trzy lokalne narzędzia: `get_activity`, `suggest_attribution` i `review_day`. Nie ma
-narzędzia zapisującego do Jiry — ta operacja pozostaje wyłącznie w rękach użytkownika aplikacji.
+MCP udostępnia trzy lokalne narzędzia: `get_activity`, `suggest_attribution` i `review_day`. Wszystkie
+operują wyłącznie na lokalnym rejestrze aktywności.
 
 ## Automatyzacja `launchd`
 

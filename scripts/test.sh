@@ -33,6 +33,11 @@ if ! rg -q 'window\?\.orderFrontRegardless\(\)' "$PROJECT_ROOT/macos/ClaudeActiv
   exit 1
 fi
 
+if rg -q 'ActivityJiraLogger|addWorklog|saveToJira' "$PROJECT_ROOT/macos/ClaudeActivityWindowController.swift"; then
+  echo "Claude activity dashboard must remain analysis-only" >&2
+  exit 1
+fi
+
 if rg -q 'Timer\.scheduledTimer\(timeInterval:.*#selector\(refresh\)' "$PROJECT_ROOT/macos/main.swift"; then
   echo "unsafe Timer selector for @MainActor refresh" >&2
   exit 1

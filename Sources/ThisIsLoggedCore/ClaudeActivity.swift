@@ -37,88 +37,6 @@ public struct DailyActivity: Sendable {
   }
 }
 
-public enum ActivityReviewStatus: String, Equatable, Sendable {
-  case approved
-  case rejected
-}
-
-public struct ActivityReview: Equatable, Sendable {
-  public let day: String
-  public let status: ActivityReviewStatus
-  public let allocations: [ActivityAllocation]
-}
-
-public struct ActivityLogResult: Equatable, Sendable {
-  public let writtenIssues: Int
-  public let skippedIssues: Int
-  public let writtenMinutes: Int
-}
-
-public enum ActivityLoggingError: LocalizedError {
-  case conflict(issue: String, existingMinutes: Int, proposedMinutes: Int)
-  case dailyOverflow(existingMinutes: Int, proposedMinutes: Int, targetMinutes: Int)
-
-  public var errorDescription: String? {
-    switch self {
-    case .conflict(let issue, let existing, let proposed):
-      "\(issue) ma już \(existing) min w Jirze, a propozycja wynosi \(proposed) min. Niczego nie zapisano."
-    case .dailyOverflow(let existing, let proposed, let target):
-      "Jira ma już \(existing) min tego dnia. Dopisanie \(proposed) min przekroczyłoby cel \(target) min. Niczego nie zapisano."
-    }
-  }
-}
-
-public struct ActivityJiraLogger: Sendable {
-  private let jira: any JiraAccess
-
-  public init(jira: any JiraAccess) { self.jira = jira }
-
-  public func log(_ activity: DailyActivity) async throws -> ActivityLogResult {
-    guard let day = LocalDay(activity.day) else { throw ClaudeActivityError.invalidHook }
-    let proposed = activity.allocations.filter { $0.issueKey != "Nieprzypisane" && $0.minutes > 0 }
-    let user = try await jira.currentUser()
-    let existingDay = try await jira.dailyWorklogs(userID: user.id, from: day, to: day)[day]?.seconds ?? 0
-    var additions: [ActivityAllocation] = []
-    var skipped = 0
-    for allocation in proposed {
-      let existing = try await jira.issueWorklogs(issue: allocation.issueKey, userID: user.id)[day]?.seconds ?? 0
-      if existing == allocation.minutes * 60 {
-        skipped += 1
-      } else if existing == 0 {
-        additions.append(allocation)
-      } else {
-        throw ActivityLoggingError.conflict(
-          issue: allocation.issueKey,
-          existingMinutes: existing / 60,
-          proposedMinutes: allocation.minutes
-        )
-      }
-    }
-    let addedMinutes = additions.reduce(0) { $0 + $1.minutes }
-    let targetMinutes = activity.allocations.reduce(0) { $0 + $1.minutes }
-    if existingDay / 60 + addedMinutes > targetMinutes {
-      throw ActivityLoggingError.dailyOverflow(
-        existingMinutes: existingDay / 60,
-        proposedMinutes: addedMinutes,
-        targetMinutes: targetMinutes
-      )
-    }
-    for allocation in additions {
-      try await jira.addWorklog(
-        issue: allocation.issueKey,
-        day: day,
-        seconds: allocation.minutes * 60,
-        comment: "This Is Logged · Claude Code"
-      )
-    }
-    return ActivityLogResult(
-      writtenIssues: additions.count,
-      skippedIssues: skipped,
-      writtenMinutes: addedMinutes
-    )
-  }
-}
-
 public struct HookCapture: Sendable {
   public let eventID: String
   public let eventName: String
@@ -225,46 +143,11 @@ public final class ActivityStore: @unchecked Sendable {
     }
   }
 
-  public func review(day: String) throws -> ActivityReview? {
-    guard LocalDay(day) != nil else { throw ClaudeActivityError.invalidHook }
-    return try withDatabase { database in
-      var statement: OpaquePointer?
-      guard sqlite3_prepare_v2(database, "SELECT status, allocations FROM activity_reviews WHERE day = ?", -1, &statement, nil) == SQLITE_OK else {
-        throw databaseError(database)
-      }
-      defer { sqlite3_finalize(statement) }
-      bind(day, to: statement, at: 1)
-      guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
-      guard let statusValue = string(statement, 0), let status = ActivityReviewStatus(rawValue: statusValue),
-            let json = string(statement, 1)?.data(using: .utf8),
-            let allocations = try? JSONDecoder().decode([ActivityAllocation].self, from: json) else {
-        throw ClaudeActivityError.database("nie można odczytać dziennego podsumowania")
-      }
-      return ActivityReview(day: day, status: status, allocations: allocations)
-    }
-  }
-
-  public func saveReview(day: String, status: ActivityReviewStatus, allocations: [ActivityAllocation]) throws {
-    guard LocalDay(day) != nil,
-          let data = try? JSONEncoder().encode(allocations),
-          let json = String(data: data, encoding: .utf8) else { throw ClaudeActivityError.invalidHook }
-    try withDatabase { database in
-      let sql = "INSERT OR REPLACE INTO activity_reviews (day, status, allocations, updated_at) VALUES (?, ?, ?, ?)"
-      var statement: OpaquePointer?
-      guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else { throw databaseError(database) }
-      defer { sqlite3_finalize(statement) }
-      bind(day, to: statement, at: 1)
-      bind(status.rawValue, to: statement, at: 2)
-      bind(json, to: statement, at: 3)
-      sqlite3_bind_double(statement, 4, Date().timeIntervalSince1970)
-      guard sqlite3_step(statement) == SQLITE_DONE else { throw databaseError(database) }
-    }
-  }
-
-  public func activity(on date: Date = Date(), targetMinutes: Int = 480) throws -> DailyActivity {
+  public func activity(on date: Date = Date(), now: Date = Date()) throws -> DailyActivity {
     let calendar = Calendar.current
     let start = calendar.startOfDay(for: date)
-    let end = calendar.date(byAdding: .day, value: 1, to: start)!
+    let dayEnd = calendar.date(byAdding: .day, value: 1, to: start)!
+    let end = min(dayEnd, max(start, now))
     let events = try events(from: start, to: end)
     let prompts = events.filter { $0.kind == "UserPromptSubmit" }
     var seconds: [String: Double] = [:]
@@ -276,14 +159,12 @@ public final class ActivityStore: @unchecked Sendable {
         $0.kind == "Stop" && $0.sessionID == prompt.sessionID && $0.occurredAt > prompt.occurredAt
       }?.occurredAt ?? end
       let finish = [nextPrompt, stop, prompt.occurredAt.addingTimeInterval(30 * 60)].min()!
-      let duration = max(5 * 60, finish.timeIntervalSince(prompt.occurredAt))
+      let duration = max(0, finish.timeIntervalSince(prompt.occurredAt))
       seconds[prompt.issueKey ?? "Nieprzypisane", default: 0] += duration
     }
 
     let trackedSeconds = seconds.values.reduce(0, +)
-    let roundedTrackedUnits = Int((trackedSeconds / 300).rounded())
-    let targetUnits = targetMinutes > 0 ? Int((Double(targetMinutes) / 5).rounded()) : roundedTrackedUnits
-    let trackedUnits = min(targetUnits, Int((trackedSeconds / 300).rounded()))
+    let trackedUnits = trackedSeconds > 0 ? max(1, Int((trackedSeconds / 300).rounded())) : 0
     var units: [String: Int] = [:]
     if trackedUnits > 0, trackedSeconds > 0 {
       let shares = seconds.map { (key: $0.key, exact: $0.value / trackedSeconds * Double(trackedUnits)) }
@@ -294,7 +175,6 @@ public final class ActivityStore: @unchecked Sendable {
         left -= 1
       }
     }
-    units["Nieprzypisane", default: 0] += targetUnits - trackedUnits
     let allocations = units.filter { $0.value > 0 }.map { key, value in
       ActivityAllocation(issueKey: key, minutes: value * 5, evidence: prompts.filter { ($0.issueKey ?? "Nieprzypisane") == key }.count)
     }.sorted { left, right in
@@ -372,9 +252,6 @@ public final class ActivityStore: @unchecked Sendable {
       occurred_at REAL NOT NULL, issue_key TEXT NOT NULL, summary TEXT NOT NULL, confidence REAL NOT NULL
     );
     CREATE INDEX IF NOT EXISTS activity_attributions_event ON activity_attributions(event_id, occurred_at);
-    CREATE TABLE IF NOT EXISTS activity_reviews (
-      day TEXT PRIMARY KEY, status TEXT NOT NULL, allocations TEXT NOT NULL, updated_at REAL NOT NULL
-    );
     """
 
   private static let dayFormatter: DateFormatter = {
@@ -506,7 +383,7 @@ public struct ClaudeMCPServer: Sendable {
     switch name {
     case "get_activity":
       let day = try parseDay(arguments["date"] as? String)
-      let activity = try store.activity(on: day, targetMinutes: targetMinutes(arguments, day: day))
+      let activity = try store.activity(on: day)
       let entries = activity.events.suffix(min(arguments["limit"] as? Int ?? 200, 1_000)).map { event in
         [
           "id": event.id, "at": ISO8601DateFormatter().string(from: event.occurredAt), "kind": event.kind,
@@ -528,7 +405,7 @@ public struct ClaudeMCPServer: Sendable {
       return toolResult(["saved": ids.count, "issue_key": issue.uppercased()])
     case "review_day":
       let day = try parseDay(arguments["date"] as? String)
-      let activity = try store.activity(on: day, targetMinutes: targetMinutes(arguments, day: day))
+      let activity = try store.activity(on: day)
       let allocations = activity.allocations.map {
         ["issue_key": $0.issueKey, "minutes": $0.minutes, "evidence": $0.evidence]
       }
@@ -536,12 +413,6 @@ public struct ClaudeMCPServer: Sendable {
     default:
       return ["isError": true, "content": [["type": "text", "text": "Unknown tool: \(name)"]]]
     }
-  }
-
-  private func targetMinutes(_ arguments: [String: Any], day: Date) -> Int {
-    if let value = arguments["target_minutes"] as? Int { return max(0, value) }
-    if Calendar.current.isDateInWeekend(day) { return 0 }
-    return Int(((try? SettingsStore().loadDraft().workdayHours) ?? 8) * 60)
   }
 
   private func parseDay(_ value: String?) throws -> Date {
@@ -579,10 +450,9 @@ public struct ClaudeMCPServer: Sendable {
       ], "required": ["event_ids", "issue_key"]],
     ],
     [
-      "name": "review_day", "description": "Build a central 5-minute daily allocation across all Claude Code worktrees; unproven time stays unassigned.",
+      "name": "review_day", "description": "Build a central 5-minute estimate from observed activity across all Claude Code worktrees.",
       "inputSchema": ["type": "object", "properties": [
         "date": ["type": "string", "description": "Local date YYYY-MM-DD"],
-        "target_minutes": ["type": "integer", "minimum": 0],
       ]],
     ],
   ] }

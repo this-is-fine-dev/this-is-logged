@@ -1330,9 +1330,9 @@ if let notify = arguments.firstIndex(of: "--notify"), arguments.indices.contains
     let settings = try SettingsStore().load()
     let decision = try await TimeReportEngine.live(settings: settings).reminder()
     let activity = settings.claudeIntegrationEnabled
-      ? try? ActivityStore().activity(on: Date(), targetMinutes: Int(settings.workdayHours * 60)) : nil
+      ? try? ActivityStore().activity(on: Date()) : nil
     let activityMessage = activity?.events.isEmpty == false
-      ? "Analiza pracy z Claude Code jest gotowa. Sprawdź przypisania przed zapisem do Jiry." : nil
+      ? "Analiza pracy z Claude Code jest gotowa. Sprawdź przypisania i timestampy." : nil
     let message = [decision.message, activityMessage].compactMap { $0 }.joined(separator: "\n\n")
     if !message.isEmpty, !deliverNotification(message, category: activityMessage == nil ? nil : activityCategory) {
       throw NSError(domain: "ThisIsLogged", code: 3, userInfo: [NSLocalizedDescriptionKey: "Nie udało się wyświetlić powiadomienia."])
