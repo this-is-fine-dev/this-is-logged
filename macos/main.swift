@@ -233,8 +233,9 @@ private func noDataMessage(day: Int, hour: Int, missingDays: Int) -> String {
   return missingDays == 0 ? " \(messages[day % messages.count])" : " braki: \(missingDays)"
 }
 
-private func statusBarTitle(seconds: Int, weekendText: String?, missingDays: Int) -> String {
+private func statusBarTitle(seconds: Int, weekendText: String?, missingDays: Int, day: Int, hour: Int) -> String {
   if let weekendText { return missingDays == 0 ? " \(weekendText)" : " braki: \(missingDays)" }
+  if seconds == 0, hour < 8 { return noDataMessage(day: day, hour: hour, missingDays: missingDays) }
   return " \(nativeHours(seconds)) h"
 }
 
@@ -744,7 +745,9 @@ private func todayPeriod() -> String {
       item.button?.title = statusBarTitle(
         seconds: today.sourceSeconds,
         weekendText: weekendText,
-        missingDays: missingDays
+        missingDays: missingDays,
+        day: currentDay.day,
+        hour: currentHour
       )
       if let week = completedWeek {
         renderPeriod(weekStatus, label: "Tydzień", value: week, expected: expected, showTarget: showTarget)
@@ -1305,8 +1308,10 @@ if let notify = arguments.firstIndex(of: "--notify"), arguments.indices.contains
   precondition(noDataMessage(day: 7, hour: 7, missingDays: 0) == " od ósmej, szefie", "morning message before work")
   precondition(noDataMessage(day: 7, hour: 8, missingDays: 0) == " gdzie VPN?", "no-data message after work starts")
   precondition(noDataMessage(day: 7, hour: 7, missingDays: 2) == " braki: 2", "missing reports stay visible before work")
-  precondition(statusBarTitle(seconds: 0, weekendText: "nadgodzinki?", missingDays: 0) == " nadgodzinki?", "weekend easter egg")
-  precondition(statusBarTitle(seconds: 0, weekendText: "nadgodzinki?", missingDays: 2) == " braki: 2", "weekend warning")
+  precondition(statusBarTitle(seconds: 0, weekendText: "nadgodzinki?", missingDays: 0, day: 7, hour: 7) == " nadgodzinki?", "weekend easter egg")
+  precondition(statusBarTitle(seconds: 0, weekendText: "nadgodzinki?", missingDays: 2, day: 7, hour: 7) == " braki: 2", "weekend warning")
+  precondition(statusBarTitle(seconds: 0, weekendText: nil, missingDays: 0, day: 7, hour: 7) == " od ósmej, szefie", "live zero before work")
+  precondition(statusBarTitle(seconds: 0, weekendText: nil, missingDays: 0, day: 7, hour: 8) == " 0.00 h", "workday starts at eight")
   let closedDays = PeriodStatus(from: "2026-08-31", to: "2026-09-03", workingDays: 4, sourceSeconds: 115_200, targetSeconds: 115_200, missing: [], differences: [])
   let friday = PeriodStatus(from: "2026-09-04", to: "2026-09-04", workingDays: 1, sourceSeconds: 28_800, targetSeconds: 28_800, missing: [], differences: [])
   let completedWeek = completedPeriod(closedDays, including: friday, includeDay: true)
