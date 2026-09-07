@@ -171,6 +171,19 @@ private struct MonthCapacity: Decodable {
   let reportedSeconds: Int?
 }
 
+private func currentToday(_ status: ReportStatus?, on day: LocalDay) -> PeriodStatus? {
+  guard let today = status?.today, today.from == day.description, today.to == day.description else { return nil }
+  return today
+}
+
+private func dayLabel(_ day: LocalDay) -> String {
+  let formatter = DateFormatter()
+  formatter.locale = Locale(identifier: "pl_PL")
+  formatter.dateFormat = "EEEE, d MMMM"
+  let value = formatter.string(from: day.date)
+  return value.prefix(1).uppercased(with: formatter.locale) + value.dropFirst()
+}
+
 private func parseLog(_ text: String) -> [Run] {
   let iso = ISO8601DateFormatter()
   iso.formatOptions.insert(.withFractionalSeconds)
@@ -219,8 +232,8 @@ private func statusBarTitle(seconds: Int, weekendText: String?, missingDays: Int
   return " \(nativeHours(seconds)) h"
 }
 
-private func completedPeriod(_ period: PeriodStatus?, including day: PeriodStatus?, onWeekend: Bool) -> PeriodStatus? {
-  guard onWeekend, let period, let day, day.workingDays > 0, day.from > period.to else { return period }
+private func completedPeriod(_ period: PeriodStatus?, including day: PeriodStatus?, includeDay: Bool) -> PeriodStatus? {
+  guard includeDay, let period, let day, day.workingDays > 0, day.from > period.to else { return period }
   return PeriodStatus(
     from: period.from,
     to: day.to,
@@ -686,12 +699,17 @@ private func todayPeriod() -> String {
     }
     let showTarget = status?.syncEnabled ?? configuredSyncEnabled
     let isWeekend = Calendar.current.isDateInWeekend(now)
+    let currentDay = LocalDay(now)
+    let today = currentToday(status, on: currentDay)
+    let cachedDayIsClosed = status?.today.map { $0.to < currentDay.description } ?? false
     let weekendText = isWeekend ? weekendMessage(day: Calendar.current.component(.day, from: now)) : nil
-    let completedWeek = completedPeriod(status?.week, including: status?.today, onWeekend: isWeekend)
-    let completedMonth = completedPeriod(status?.month, including: status?.today, onWeekend: isWeekend)
+    let completedWeek = completedPeriod(status?.week, including: status?.today, includeDay: isWeekend || cachedDayIsClosed)
+    let month = status?.month.flatMap { $0.from.hasPrefix(currentDay.monthID) ? $0 : nil }
+    let monthDay = status?.today.flatMap { $0.from.hasPrefix(currentDay.monthID) ? $0 : nil }
+    let completedMonth = completedPeriod(month, including: monthDay, includeDay: isWeekend || cachedDayIsClosed)
     let missingDays = completedMonth?.missing.count ?? 0
-    renderHeader(status, month: completedMonth, weekendText: weekendText, missingDays: missingDays)
-    if let status, status.today != nil, let checked = isoDate(status.lastSuccessfulAt ?? status.checkedAt) {
+    renderHeader(status, today: today, month: completedMonth, weekendText: weekendText, missingDays: missingDays)
+    if let status, let today, let checked = isoDate(status.lastSuccessfulAt ?? status.checkedAt) {
       let formatter = DateFormatter()
       formatter.dateFormat = "HH:mm"
       let expected = status.expectedSeconds ?? Int((Double(configuredWorkdayHours) ?? 8) * 3600)
@@ -705,8 +723,8 @@ private func todayPeriod() -> String {
         } else {
           setWaiting(yesterdayStatus, label: "Ostatni dzień pracy")
         }
-      } else if let today = status.today {
-        renderPeriod(todayStatus, label: "Dzisiaj", value: today, expected: expected, showTarget: showTarget)
+      } else {
+        renderPeriod(todayStatus, label: dayLabel(currentDay), value: today, expected: expected, showTarget: showTarget)
         todayStatus.title += status.error == nil
           ? " · \(formatter.string(from: checked))"
           : " · offline · dane \(formatter.string(from: checked))"
@@ -715,12 +733,9 @@ private func todayPeriod() -> String {
         } else {
           setWaiting(yesterdayStatus, label: "Poprzedni dzień pracy")
         }
-      } else {
-        todayStatus.title = "Dzisiaj · \(formatSeconds(status.seconds ?? 0)) h · \(formatter.string(from: checked))"
-        setDetails(todayStatus, ["Ostatni odczyt: \(formatter.string(from: checked))"])
       }
       item.button?.title = statusBarTitle(
-        seconds: status.today?.sourceSeconds ?? status.seconds ?? 0,
+        seconds: today.sourceSeconds,
         weekendText: weekendText,
         missingDays: missingDays
       )
@@ -734,15 +749,36 @@ private func todayPeriod() -> String {
       } else {
         setWaiting(monthStatus, label: "Miesiąc")
       }
-    } else {
-      let currentLabel = isWeekend ? "Weekend" : "Dzisiaj"
-      todayStatus.title = status?.error == nil ? "\(currentLabel) · czekam na dane" : "\(currentLabel) · brak połączenia"
-      setDetails(todayStatus, [status?.error == nil ? "Czekam na pierwszy odczyt." : "Nie udało się pobrać danych z Jiry."])
-      for (line, label) in [(yesterdayStatus, isWeekend ? "Ostatni dzień pracy" : "Wczoraj"), (weekStatus, "Tydzień"), (monthStatus, "Miesiąc")] {
-        line.title = "\(label) · brak danych"
-        setDetails(line, ["Nie udało się pobrać danych z Jiry."])
+    } else if let status, let checked = isoDate(status.lastSuccessfulAt ?? status.checkedAt) {
+      let formatter = DateFormatter()
+      formatter.dateFormat = "dd.MM, HH:mm"
+      let expected = status.expectedSeconds ?? Int((Double(configuredWorkdayHours) ?? 8) * 3600)
+      todayStatus.title = "\(dayLabel(currentDay)) · brak dzisiejszych danych"
+      let staleDetail = status.error == nil ? "Ostatni odczyt: " : "Offline · ostatni udany odczyt: "
+      setDetails(todayStatus, [staleDetail + formatter.string(from: checked)])
+      if let lastWorkday = [status.today, status.yesterday].compactMap({ $0 }).filter({ $0.workingDays > 0 && $0.to < currentDay.description }).max(by: { $0.to < $1.to }) {
+        renderPeriod(yesterdayStatus, label: weekdayLabel(lastWorkday.to), value: lastWorkday, expected: expected, showTarget: showTarget)
+      } else {
+        setWaiting(yesterdayStatus, label: "Poprzedni dzień pracy")
       }
-      item.button?.title = ""
+      if let week = completedWeek {
+        renderPeriod(weekStatus, label: "Tydzień do \(shortDate(week.to))", value: week, expected: expected, showTarget: showTarget)
+      } else {
+        setWaiting(weekStatus, label: "Tydzień")
+      }
+      if let month = completedMonth {
+        renderPeriod(monthStatus, label: "Miesiąc do \(shortDate(month.to))", value: month, expected: expected, showTarget: showTarget)
+      } else {
+        setWaiting(monthStatus, label: "Miesiąc")
+      }
+      item.button?.title = " —"
+    } else {
+      todayStatus.title = "\(dayLabel(currentDay)) · czekam na dane"
+      setDetails(todayStatus, ["Czekam na pierwszy odczyt z Jiry."])
+      for (line, label) in [(yesterdayStatus, "Poprzedni dzień pracy"), (weekStatus, "Tydzień"), (monthStatus, "Miesiąc")] {
+        setWaiting(line, label: label)
+      }
+      item.button?.title = " —"
     }
     reminderSchedule.title = isWeekend ? "Przypomnienia wrócą w poniedziałek" : "Przypomnienie \(configuredReminderTime)"
     if configuredSyncEnabled {
@@ -756,20 +792,20 @@ private func todayPeriod() -> String {
     }
   }
 
-  private func renderHeader(_ status: ReportStatus?, month: PeriodStatus?, weekendText: String?, missingDays: Int) {
+  private func renderHeader(_ status: ReportStatus?, today: PeriodStatus?, month: PeriodStatus?, weekendText: String?, missingDays: Int) {
     let formatter = DateFormatter()
     formatter.locale = Locale(identifier: "pl_PL")
     formatter.dateFormat = "LLLL"
     headerMonthLabel.stringValue = formatter.string(from: Date()).uppercased(with: formatter.locale)
-    headerTodayLabel.stringValue = weekendText == nil ? "DZISIAJ" : "WEEKEND"
-    guard let status, status.today != nil else {
+    headerTodayLabel.stringValue = dayLabel(LocalDay(Date())).uppercased(with: formatter.locale)
+    guard let status else {
       headerMonthValue.stringValue = "—"
       headerMonthDetail.stringValue = "Brak danych z Jiry"
       headerTodayValue.stringValue = "Brak danych"
       return
     }
     let expected = status.expectedSeconds ?? Int((Double(configuredWorkdayHours) ?? 8) * 3600)
-    if let capacity = status.monthCapacity {
+    if month != nil, let capacity = status.monthCapacity {
       headerMonthValue.stringValue = "\(formatSeconds(capacity.reportedSeconds ?? 0)) / \(formatSeconds(capacity.expectedSeconds)) h"
     } else {
       headerMonthValue.stringValue = "—"
@@ -787,9 +823,12 @@ private func todayPeriod() -> String {
       headerTodayValue.stringValue = missingDays == 0 ? weekendText : "Braki w raportach: \(missingDays)"
       return
     }
-    let today = status.today
-    let todaySeconds = today?.sourceSeconds ?? status.seconds ?? 0
-    if today?.workingDays == 0 {
+    guard let today else {
+      headerTodayValue.stringValue = "Brak dzisiejszych danych"
+      return
+    }
+    let todaySeconds = today.sourceSeconds
+    if today.workingDays == 0 {
       headerTodayValue.stringValue = "\(formatSeconds(todaySeconds)) h · dzień wolny"
       return
     }
@@ -1259,8 +1298,10 @@ if let notify = arguments.firstIndex(of: "--notify"), arguments.indices.contains
   precondition(statusBarTitle(seconds: 0, weekendText: "nadgodzinki?", missingDays: 2) == " braki: 2", "weekend warning")
   let closedDays = PeriodStatus(from: "2026-08-31", to: "2026-09-03", workingDays: 4, sourceSeconds: 115_200, targetSeconds: 115_200, missing: [], differences: [])
   let friday = PeriodStatus(from: "2026-09-04", to: "2026-09-04", workingDays: 1, sourceSeconds: 28_800, targetSeconds: 28_800, missing: [], differences: [])
-  let completedWeek = completedPeriod(closedDays, including: friday, onWeekend: true)
+  let completedWeek = completedPeriod(closedDays, including: friday, includeDay: true)
   precondition(completedWeek?.to == "2026-09-04" && completedWeek?.workingDays == 5 && completedWeek?.sourceSeconds == 144_000, "cached Friday totals")
+  precondition(currentToday(status, on: LocalDay("2026-09-07")!) == nil, "Friday cache cannot be shown as Monday")
+  precondition(dayLabel(LocalDay("2026-09-07")!) == "Poniedziałek, 7 września", "full current date label")
   print("ok")
 } else if arguments.contains("--agent-status") {
   runAgentMode {

@@ -19,7 +19,7 @@ Awaria albo wyłączenie synchronizacji nie blokuje odczytu raportów z Jiry gł
 
 ## Możliwości
 
-- raport dzisiejszy oraz bilans bieżącego miesiąca;
+- raport dzisiejszy z pełną datą oraz bilans bieżącego miesiąca;
 - kontrola wczoraj, tygodnia pracy i zakończonych dni miesiąca;
 - wskazanie konkretnych dat i brakujących godzin;
 - odświeżanie co minutę przez `launchd`;
