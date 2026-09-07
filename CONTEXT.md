@@ -8,3 +8,5 @@
 Rejestr aplikacji jest źródłem prawdy. Hook zapisuje tylko bieżące polecenie i koniec odpowiedzi. Model ocenia wyłącznie bieżące polecenie: może je odrzucić jako szum albo przypisać do zadania. MCP nie zapisuje worklogów do Jiry.
 
 Czas zadania biegnie od polecenia do następnego polecenia użytkownika, więc obejmuje generowanie odpowiedzi, czytanie, analizę kodu i pisanie kolejnej wiadomości. Pojedynczy odcinek ma limit 30 minut bezczynności.
+
+W bieżącym dniu roboczym, jeśli istnieje choć jedno rozpoznane zadanie, brak do czasu, który upłynął od 08:00, jest rozdzielany proporcjonalnie między zaobserwowane zadania. Czas zaobserwowany i estymowany pozostają osobno widoczne w interfejsie.

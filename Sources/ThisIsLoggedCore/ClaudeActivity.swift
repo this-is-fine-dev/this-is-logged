@@ -29,11 +29,21 @@ public struct DailyActivity: Sendable {
   public let day: String
   public let events: [ActivityEvent]
   public let allocations: [ActivityAllocation]
+  public let observedMinutes: Int
+  public let inferredMinutes: Int
 
-  public init(day: String, events: [ActivityEvent], allocations: [ActivityAllocation]) {
+  public init(
+    day: String,
+    events: [ActivityEvent],
+    allocations: [ActivityAllocation],
+    observedMinutes: Int? = nil,
+    inferredMinutes: Int = 0
+  ) {
     self.day = day
     self.events = events
     self.allocations = allocations
+    self.observedMinutes = observedMinutes ?? allocations.reduce(0) { $0 + $1.minutes }
+    self.inferredMinutes = inferredMinutes
   }
 }
 
@@ -148,7 +158,7 @@ public final class ActivityStore: @unchecked Sendable {
     }
   }
 
-  public func activity(on date: Date = Date(), now: Date = Date()) throws -> DailyActivity {
+  public func activity(on date: Date = Date(), now: Date = Date(), targetMinutes: Int? = nil) throws -> DailyActivity {
     let calendar = Calendar.current
     let start = calendar.startOfDay(for: date)
     let dayEnd = calendar.date(byAdding: .day, value: 1, to: start)!
@@ -166,7 +176,10 @@ public final class ActivityStore: @unchecked Sendable {
     }
 
     let trackedSeconds = seconds.values.reduce(0, +)
-    let trackedUnits = trackedSeconds > 0 ? max(1, Int((trackedSeconds / 300).rounded())) : 0
+    let observedUnits = trackedSeconds > 0 ? max(1, Int((trackedSeconds / 300).rounded())) : 0
+    let requestedUnits = targetMinutes.map { Int((Double(max(0, $0)) / 5).rounded()) } ?? observedUnits
+    let canInfer = seconds.keys.contains { $0 != "Nieprzypisane" }
+    let trackedUnits = canInfer ? max(observedUnits, requestedUnits) : observedUnits
     var units: [String: Int] = [:]
     if trackedUnits > 0, trackedSeconds > 0 {
       let shares = seconds.map { (key: $0.key, exact: $0.value / trackedSeconds * Double(trackedUnits)) }
@@ -187,7 +200,9 @@ public final class ActivityStore: @unchecked Sendable {
     return DailyActivity(
       day: Self.dayFormatter.string(from: start),
       events: events.filter { $0.issueKey != Self.discardedIssue },
-      allocations: allocations
+      allocations: allocations,
+      observedMinutes: observedUnits * 5,
+      inferredMinutes: (trackedUnits - observedUnits) * 5
     )
   }
 
@@ -395,11 +410,15 @@ public struct ClaudeMCPServer: Sendable {
       return toolResult(["saved": ids.count, "issue_key": issue.uppercased()])
     case "review_day":
       let day = try parseDay(arguments["date"] as? String)
-      let activity = try store.activity(on: day)
+      let activity = try store.activity(on: day, targetMinutes: arguments["target_minutes"] as? Int)
       let allocations = activity.allocations.map {
         ["issue_key": $0.issueKey, "minutes": $0.minutes, "evidence": $0.evidence]
       }
-      return toolResult(["date": activity.day, "allocations": allocations, "total_minutes": activity.allocations.reduce(0) { $0 + $1.minutes }])
+      return toolResult([
+        "date": activity.day, "allocations": allocations,
+        "observed_minutes": activity.observedMinutes, "inferred_minutes": activity.inferredMinutes,
+        "total_minutes": activity.allocations.reduce(0) { $0 + $1.minutes },
+      ])
     default:
       return ["isError": true, "content": [["type": "text", "text": "Unknown tool: \(name)"]]]
     }
@@ -449,6 +468,7 @@ public struct ClaudeMCPServer: Sendable {
       "name": "review_day", "description": "Build a central 5-minute estimate from observed activity across all Claude Code worktrees.",
       "inputSchema": ["type": "object", "properties": [
         "date": ["type": "string", "description": "Local date YYYY-MM-DD"],
+        "target_minutes": ["type": "integer", "minimum": 0],
       ]],
     ],
   ] }

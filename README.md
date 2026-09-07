@@ -109,6 +109,10 @@ Odcinek trwa od wysłania polecenia do następnego polecenia, dzięki czemu obej
 odpowiedzi, analizę zmian i pisanie kolejnej wiadomości. Po 30 minutach bez kolejnej aktywności jest
 automatycznie zamykany.
 
+W bieżącym dniu brak do czasu, który upłynął od 08:00, jest proporcjonalnie rozdzielany między
+rozpoznane zadania. Dashboard jawnie rozdziela czas wynikający ze zdarzeń od dodanej estymacji.
+Obok klucza zadania asynchronicznie pobiera jego tytuł z Jiry głównej.
+
 Niżej znajduje się oś ostatnich 50 istotnych zdarzeń z timestampami `HH:mm:ss`. Pełna liczba zdarzeń
 nadal bierze udział w obliczeniu czasu, ale nie tworzy setek kontrolek w oknie. Ten moduł działa
 wyłącznie analitycznie: nie zawiera przycisku, kodu ani narzędzia MCP zapisującego worklogi do Jiry.

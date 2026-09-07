@@ -12,6 +12,9 @@ import ThisIsLoggedCore
   private let rows = FlippedActivityStackView()
   private let safety = NSTextField(labelWithString: "Tryb analizy · nic nie jest wysyłane do Jiry")
   private var allocationRows: [NSView] = []
+  private var issueFields: [String: NSTextField] = [:]
+  private var issueTitles: [String: String] = [:]
+  private var loadingTitles: Set<String> = []
 
   init(settings: AppSettings) {
     self.settings = settings
@@ -110,7 +113,12 @@ import ThisIsLoggedCore
 
   @objc private func reload() {
     do {
-      render(try store.activity(on: datePicker.dateValue))
+      let now = Date()
+      render(try store.activity(
+        on: datePicker.dateValue,
+        now: now,
+        targetMinutes: targetMinutes(for: datePicker.dateValue, now: now)
+      ))
     } catch {
       render(DailyActivity(day: "", events: [], allocations: []))
       dayStatus.textColor = .systemRed
@@ -118,21 +126,25 @@ import ThisIsLoggedCore
     }
   }
 
-  private func render(_ activity: DailyActivity) {
+  private func render(_ activity: DailyActivity, fetchTitles: Bool = true) {
     rows.arrangedSubviews.forEach { rows.removeArrangedSubview($0); $0.removeFromSuperview() }
     allocationRows.removeAll()
+    issueFields.removeAll()
 
     rows.addArrangedSubview(section("SZACOWANY PODZIAŁ CZASU"))
     rows.addArrangedSubview(row([
       label("Zadanie", header: true), label("Czas", header: true),
       label("Podstawa", header: true), label("Zakres sygnałów", header: true),
-    ], widths: [220, 80, 100, 250]))
+    ], widths: [330, 70, 90, 160]))
     for allocation in activity.allocations {
       let evidence = allocation.evidence == 0 ? "bez wskazań" : "\(allocation.evidence) wskazań"
+      let task = label(Self.taskLabel(allocation.issueKey, title: issueTitles[allocation.issueKey]))
+      task.toolTip = task.stringValue
+      issueFields[allocation.issueKey] = task
       let item = row([
-        label(allocation.issueKey), label(Self.duration(allocation.minutes)),
+        task, label(Self.duration(allocation.minutes)),
         label(evidence), label(signalRange(for: allocation.issueKey, events: activity.events)),
-      ], widths: [220, 80, 100, 250])
+      ], widths: [330, 70, 90, 160])
       allocationRows.append(item)
       rows.addArrangedSubview(item)
     }
@@ -178,8 +190,42 @@ import ThisIsLoggedCore
     dayTotal.textColor = total == target || target == 0 ? .labelColor : .systemOrange
     let sessions = Set(activity.events.map(\.sessionID)).count
     dayStatus.textColor = .secondaryLabelColor
-    dayStatus.stringValue = "\(sessions) sesji · \(activity.events.count) zdarzeń · wszystkie worktree razem"
+    let estimate = activity.inferredMinutes > 0 ? " · +\(Self.duration(activity.inferredMinutes)) estymacji" : ""
+    dayStatus.stringValue = "\(sessions) sesji · \(activity.events.count) zdarzeń · \(Self.duration(activity.observedMinutes)) z aktywności\(estimate)"
     resizeDocument()
+    if fetchTitles { loadTitles(for: activity.allocations.map(\.issueKey)) }
+  }
+
+  private func targetMinutes(for date: Date, now: Date) -> Int? {
+    let calendar = Calendar.current
+    guard !calendar.isDateInWeekend(date) else { return nil }
+    let selectedDay = calendar.startOfDay(for: date)
+    let today = calendar.startOfDay(for: now)
+    let dailyTarget = Int(settings.workdayHours * 60)
+    if selectedDay < today { return dailyTarget }
+    guard selectedDay == today,
+          let start = calendar.date(bySettingHour: 8, minute: 0, second: 0, of: selectedDay) else { return 0 }
+    return min(dailyTarget, max(0, Int(now.timeIntervalSince(start) / 60)))
+  }
+
+  private func loadTitles(for issues: [String]) {
+    let pending = Set(issues).filter { $0 != "Nieprzypisane" && issueTitles[$0] == nil && !loadingTitles.contains($0) }
+    guard !pending.isEmpty else { return }
+    let client = JiraClient(credentials: settings.source)
+    for issue in pending {
+      loadingTitles.insert(issue)
+      Task { [weak self] in
+        let title = try? await client.issueSummary(issue)
+        guard let self else { return }
+        self.loadingTitles.remove(issue)
+        guard let title else { return }
+        self.issueTitles[issue] = title
+        if let field = self.issueFields[issue] {
+          field.stringValue = Self.taskLabel(issue, title: title)
+          field.toolTip = field.stringValue
+        }
+      }
+    }
   }
 
   private func signalRange(for issue: String, events: [ActivityEvent]) -> String {
@@ -228,6 +274,10 @@ import ThisIsLoggedCore
     String(format: "%d:%02d", minutes / 60, minutes % 60)
   }
 
+  private static func taskLabel(_ issue: String, title: String?) -> String {
+    title.map { "\(issue) · \($0)" } ?? issue
+  }
+
   private static func eventName(_ kind: String) -> String {
     switch kind {
     case "UserPromptSubmit": "Wiadomość"
@@ -256,14 +306,15 @@ import ThisIsLoggedCore
       ActivityAllocation(issueKey: "ABC-2", minutes: 15, evidence: 3),
       ActivityAllocation(issueKey: "ABC-3", minutes: 15, evidence: 3),
       ActivityAllocation(issueKey: "ABC-4", minutes: 15, evidence: 3),
-    ]))
+    ]), fetchTitles: false)
     window?.contentView?.layoutSubtreeIfNeeded()
     resizeDocument()
     let frames = allocationRows.map { $0.convert($0.bounds, to: rows) }.sorted { $0.minY < $1.minY }
     let separated = frames.allSatisfy { $0.width >= 650 && $0.height >= 15 } &&
       zip(frames, frames.dropFirst()).allSatisfy { $0.maxY <= $1.minY }
     precondition(
-      window?.minSize.width == 700 && rows.isFlipped && rows.frame.height > 100 && safety.frame.height > 0 && separated,
+      window?.minSize.width == 700 && rows.isFlipped && rows.frame.height > 100 && safety.frame.height > 0 && separated &&
+        Self.taskLabel("ABC-1", title: "Napraw formularz") == "ABC-1 · Napraw formularz",
       "Okno aktywności ma nieprawidłowy układ"
     )
     print("ok")
