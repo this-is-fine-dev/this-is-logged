@@ -53,6 +53,11 @@ if rg -n '^  override var isFlipped' "$PROJECT_ROOT/macos"; then
   exit 1
 fi
 
+if rg -n '^  func (menuWillOpen|applicationShouldHandleReopen|userNotificationCenter)' "$PROJECT_ROOT/macos/main.swift"; then
+  echo "actor-isolated Objective-C delegate callback can crash outside the Swift main executor" >&2
+  exit 1
+fi
+
 if rg -q 'CommandLine\.arguments' "$PROJECT_ROOT/macos/main.swift"; then
   echo "CommandLine.arguments is not concurrency-safe on the release runner" >&2
   exit 1

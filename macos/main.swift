@@ -325,7 +325,7 @@ private func todayPeriod() -> String {
   return formatter.string(from: Date())
 }
 
-@MainActor private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, @preconcurrency UNUserNotificationCenterDelegate {
+@MainActor private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUserNotificationCenterDelegate {
   private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
   private let updaterController = SPUStandardUpdaterController(
     startingUpdater: true,
@@ -698,7 +698,9 @@ private func todayPeriod() -> String {
     calendarPopup.isEnabled = calendarToggle.state == .on && !sources.isEmpty
   }
 
-  func menuWillOpen(_ menu: NSMenu) { refresh() }
+  nonisolated func menuWillOpen(_ menu: NSMenu) {
+    Task { @MainActor [weak self] in self?.refresh() }
+  }
 
   @objc private func checkForUpdates(_ sender: Any?) {
     let updater = updaterController.updater
@@ -1021,8 +1023,8 @@ private func todayPeriod() -> String {
     panel.makeKeyAndOrderFront(nil)
   }
 
-  func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-    showSettings()
+  nonisolated func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+    Task { @MainActor [weak self] in self?.showSettings() }
     return true
   }
 
@@ -1270,7 +1272,7 @@ private func todayPeriod() -> String {
     print("ok")
   }
 
-  func userNotificationCenter(
+  nonisolated func userNotificationCenter(
     _ center: UNUserNotificationCenter,
     willPresent notification: UNNotification,
     withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
@@ -1278,7 +1280,7 @@ private func todayPeriod() -> String {
     completionHandler([.banner, .sound])
   }
 
-  func userNotificationCenter(
+  nonisolated func userNotificationCenter(
     _ center: UNUserNotificationCenter,
     didReceive response: UNNotificationResponse,
     withCompletionHandler completionHandler: @escaping () -> Void
@@ -1287,12 +1289,10 @@ private func todayPeriod() -> String {
     if content.categoryIdentifier == collisionCategory &&
       (response.actionIdentifier == resolveCollisionsAction ||
         response.actionIdentifier == UNNotificationDefaultActionIdentifier) {
-      DispatchQueue.main.async {
-        self.openInteractive(period())
-      }
+      Task { @MainActor [weak self] in self?.openInteractive(period()) }
     } else if content.categoryIdentifier == activityCategory &&
       (response.actionIdentifier == openActivityAction || response.actionIdentifier == UNNotificationDefaultActionIdentifier) {
-      DispatchQueue.main.async { self.showClaudeActivity() }
+      Task { @MainActor [weak self] in self?.showClaudeActivity() }
     }
     completionHandler()
   }
