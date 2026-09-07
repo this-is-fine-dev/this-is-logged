@@ -3,7 +3,7 @@ import ThisIsLoggedCore
 
 @MainActor final class SyncWindowController: NSWindowController {
   private let selectedPeriod: String
-  private let rows = NSStackView()
+  private let rows = FlippedSyncStackView()
   private let feedback = NSTextField(labelWithString: "Pobieram dane z obu instancji Jiry…")
   private let progress = NSProgressIndicator()
   private let executeButton = NSButton(title: "Synchronizuj", target: nil, action: nil)
@@ -67,20 +67,13 @@ import ThisIsLoggedCore
     scroll.hasVerticalScroller = true
     scroll.borderType = .bezelBorder
     scroll.translatesAutoresizingMaskIntoConstraints = false
-    let document = FlippedView(frame: NSRect(x: 0, y: 0, width: 620, height: 1))
     rows.orientation = .vertical
     rows.alignment = .leading
     rows.spacing = 6
-    rows.translatesAutoresizingMaskIntoConstraints = false
-    document.addSubview(rows)
-    scroll.documentView = document
-    NSLayoutConstraint.activate([
-      rows.leadingAnchor.constraint(equalTo: document.leadingAnchor, constant: 10),
-      rows.trailingAnchor.constraint(equalTo: document.trailingAnchor, constant: -10),
-      rows.topAnchor.constraint(equalTo: document.topAnchor, constant: 10),
-      rows.bottomAnchor.constraint(equalTo: document.bottomAnchor, constant: -10),
-      document.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
-    ])
+    rows.frame = NSRect(x: 0, y: 0, width: 620, height: 1)
+    rows.edgeInsets = NSEdgeInsets(top: 10, left: 10, bottom: 10, right: 10)
+    rows.autoresizingMask = [.width]
+    scroll.documentView = rows
     root.addArrangedSubview(scroll)
     scroll.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true
     scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 270).isActive = true
@@ -129,7 +122,7 @@ import ThisIsLoggedCore
       let action = NSPopUpButton(frame: .zero, pullsDown: false)
       switch item.state {
       case .add:
-        action.addItem(withTitle: "Dodaj")
+        action.addItem(withTitle: item.targetSeconds == 0 ? "Dodaj" : "Uzupełnij +\(hours(item.secondsToAdd)) h")
         action.isEnabled = false
       case .synced:
         action.addItem(withTitle: "Pomiń — zgodne")
@@ -151,6 +144,12 @@ import ThisIsLoggedCore
     feedback.stringValue = "\(plan.items.count) dni · różnice: \(collisions)"
     feedback.textColor = collisions == 0 ? .systemGreen : .systemOrange
     executeButton.isEnabled = plan.items.contains { $0.state == .add } || collisions > 0
+    resizeDocument()
+  }
+
+  private func resizeDocument() {
+    rows.layoutSubtreeIfNeeded()
+    rows.setFrameSize(NSSize(width: max(620, rows.frame.width), height: rows.fittingSize.height))
   }
 
   private func row(_ values: [String], control: NSView? = nil, header: Bool = false) -> NSView {
@@ -221,12 +220,20 @@ import ThisIsLoggedCore
   }
 
   func layoutSelfcheck() {
+    let plan = try! JSONDecoder().decode(SyncPlan.self, from: Data(#"{"from":"2026-09-07","to":"2026-09-07","targetIssue":"AUT-1","items":[{"day":"2026-09-07","sourceSeconds":28800,"targetSeconds":36000,"issueKeys":["RPR-1"],"targetWorklogIDs":["old-1"],"state":"collision"}]}"#.utf8))
+    render(plan)
     window?.contentView?.layoutSubtreeIfNeeded()
-    precondition(window?.minSize.width == 620 && executeButton.frame.height > 0 && rows.frame.width > 0, "Okno synchronizacji ma nieprawidłowy układ")
+    rows.layoutSubtreeIfNeeded()
+    let renderedViews = rows.arrangedSubviews.flatMap { ($0 as? NSStackView)?.arrangedSubviews ?? [] }
+    precondition(
+      window?.minSize.width == 620 && executeButton.frame.height > 0 && rows.frame.width > 0 && rows.frame.height > 30 &&
+        renderedViews.count == 8 && renderedViews.allSatisfy { $0.frame.height > 0 },
+      "Okno synchronizacji ma nieprawidłowy układ"
+    )
     print("ok")
   }
 }
 
-private final class FlippedView: NSView {
+private final class FlippedSyncStackView: NSStackView {
   nonisolated override var isFlipped: Bool { true }
 }

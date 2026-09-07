@@ -48,6 +48,11 @@ if rg -q 'Timer\.scheduledTimer\(timeInterval:.*#selector\(refresh\)' "$PROJECT_
   exit 1
 fi
 
+if ! rg -Uq 'private func runAgent\([^}]+Task\.detached' "$PROJECT_ROOT/macos/main.swift"; then
+  echo "launchctl is started synchronously from the main UI actor" >&2
+  exit 1
+fi
+
 if rg -n '^  override var isFlipped' "$PROJECT_ROOT/macos"; then
   echo "actor-isolated AppKit isFlipped override can crash while a window is released" >&2
   exit 1
@@ -82,5 +87,7 @@ env SDKROOT="$SDK_PATH" SWIFTPM_MODULECACHE_OVERRIDE="$MODULE_CACHE" CLANG_MODUL
   swift run --disable-sandbox --disable-keychain --package-path "$PROJECT_ROOT" ThisIsLoggedSelfcheck
 env SDKROOT="$SDK_PATH" SWIFTPM_MODULECACHE_OVERRIDE="$MODULE_CACHE" CLANG_MODULE_CACHE_PATH="$MODULE_CACHE" \
   swift run --disable-sandbox --disable-keychain --package-path "$PROJECT_ROOT" ThisIsLogged --selfcheck
+env SDKROOT="$SDK_PATH" SWIFTPM_MODULECACHE_OVERRIDE="$MODULE_CACHE" CLANG_MODULE_CACHE_PATH="$MODULE_CACHE" \
+  swift run --disable-sandbox --disable-keychain --package-path "$PROJECT_ROOT" ThisIsLogged --sync-layout-selfcheck
 env SDKROOT="$SDK_PATH" SWIFTPM_MODULECACHE_OVERRIDE="$MODULE_CACHE" CLANG_MODULE_CACHE_PATH="$MODULE_CACHE" \
   swift run --disable-sandbox --disable-keychain --package-path "$PROJECT_ROOT" ThisIsLogged --activity-layout-selfcheck

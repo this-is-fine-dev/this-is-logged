@@ -1041,10 +1041,13 @@ private func todayPeriod() -> String {
   @objc private func openLog() { NSWorkspace.shared.open(configuredSyncEnabled ? logURL : statusLogURL) }
 
   private func runAgent(_ label: String, restart: Bool = false) {
-    do {
-      try command(["kickstart"] + (restart ? ["-k"] : []) + ["gui/\(getuid())/\(label)"])
-    } catch {
-      lastSyncStatus.title = "Nie udało się uruchomić zadania launchd"
+    let arguments = ["kickstart"] + (restart ? ["-k"] : []) + ["gui/\(getuid())/\(label)"]
+    Task.detached { [weak self] in
+      do {
+        try Self.command(arguments)
+      } catch {
+        await MainActor.run { self?.lastSyncStatus.title = "Nie udało się uruchomić zadania launchd" }
+      }
     }
   }
 
@@ -1231,7 +1234,7 @@ private func todayPeriod() -> String {
     }
   }
 
-  private func command(_ arguments: [String]) throws {
+  nonisolated private static func command(_ arguments: [String]) throws {
     let task = Process()
     task.executableURL = URL(fileURLWithPath: "/bin/launchctl")
     task.arguments = arguments
@@ -1447,13 +1450,15 @@ if let notify = arguments.firstIndex(of: "--notify"), arguments.indices.contains
     let plan = try await engine.syncPlan(from: from, to: to)
     for item in plan.items {
       switch item.state {
-      case .add: print("\(item.day)  \(nativeHours(item.sourceSeconds))h  \(item.issueKeys.joined(separator: ", "))")
+      case .add:
+        let action = item.targetSeconds == 0 ? "dodaję" : "uzupełniam o \(nativeHours(item.secondsToAdd))h"
+        print("\(item.day)  \(nativeHours(item.sourceSeconds))h  \(action)  \(item.issueKeys.joined(separator: ", "))")
       case .synced: print("\(item.day)  \(nativeHours(item.sourceSeconds))h  już zsynchronizowane")
       case .collision: print("\(item.day)  \(nativeHours(item.sourceSeconds))h  KOLIZJA: w celu masz \(nativeHours(item.targetSeconds))h - pomijam")
       }
     }
     if arguments.contains("--dry-run") {
-      let seconds = plan.items.filter { $0.state == .add }.reduce(0) { $0 + $1.sourceSeconds }
+      let seconds = plan.items.filter { $0.state == .add }.reduce(0) { $0 + $1.secondsToAdd }
       print("PODGLĄD: \(nativeHours(seconds))h -> \(settings.targetIssue) (\(now.monthID))")
       return
     }

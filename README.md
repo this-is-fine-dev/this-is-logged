@@ -84,11 +84,12 @@ aplikacji samodzielnie zmienić tej opcji.
 
 ## Opcjonalna synchronizacja
 
-Automatyzacja dodaje brakujące dzienne sumy do jednego zadania docelowego. Zgodne dni pomija, a
-różnic nigdy nie nadpisuje samodzielnie.
+Automatyzacja uzupełnia dzienne sumy w jednym zadaniu docelowym. Gdy Jira docelowa ma mniej czasu
+niż główna, dopisuje wyłącznie brakującą różnicę. Zgodne dni pomija, a większej wartości w Jirze
+docelowej nigdy nie nadpisuje samodzielnie.
 
 Natywne okno synchronizacji pozwala wybrać dzień, bieżący lub poprzedni miesiąc, a następnie dla
-każdej różnicy wybrać:
+każdej kolizji wybrać:
 
 - **Zsumuj** — dopisz czas źródłowy do istniejącego;
 - **Pomiń** — pozostaw cel bez zmian;

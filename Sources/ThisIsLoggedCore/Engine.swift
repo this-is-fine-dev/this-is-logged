@@ -64,6 +64,8 @@ public struct SyncItem: Equatable, Codable, Sendable {
   public let issueKeys: [String]
   public let targetWorklogIDs: [String]
   public let state: SyncState
+
+  public var secondsToAdd: Int { max(0, sourceSeconds - targetSeconds) }
 }
 
 public struct SyncPlan: Equatable, Codable, Sendable {
@@ -168,7 +170,7 @@ public struct TimeReportEngine: Sendable {
     let items = sourceValues.keys.sorted().map { day in
       let source = sourceValues[day]!
       let destination = targetValues[day, default: DayTotal()]
-      let state: SyncState = destination.seconds == 0 ? .add : destination.seconds == source.seconds ? .synced : .collision
+      let state: SyncState = destination.seconds < source.seconds ? .add : destination.seconds == source.seconds ? .synced : .collision
       return SyncItem(
         day: day,
         sourceSeconds: source.seconds,
@@ -195,10 +197,13 @@ public struct TimeReportEngine: Sendable {
       if action == .replace {
         for id in item.targetWorklogIDs { try await target.deleteWorklog(issue: plan.targetIssue, id: id) }
       }
+      let seconds = action == .add && item.state == .add
+        ? item.secondsToAdd
+        : item.sourceSeconds
       let comment = settings.commentIssueKeys ? item.issueKeys.joined(separator: ", ") : nil
-      try await target.addWorklog(issue: plan.targetIssue, day: item.day, seconds: item.sourceSeconds, comment: comment)
+      try await target.addWorklog(issue: plan.targetIssue, day: item.day, seconds: seconds, comment: comment)
       writtenDays += 1
-      writtenSeconds += item.sourceSeconds
+      writtenSeconds += seconds
     }
     return SyncResult(writtenDays: writtenDays, writtenSeconds: writtenSeconds, collisionsSkipped: collisions)
   }

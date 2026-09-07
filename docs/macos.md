@@ -53,8 +53,9 @@ również wcześniejsze niepełne dni miesiąca.
 
 ### Synchronizacja
 
-`dev.this-is-fine.this-is-logged.sync` istnieje wyłącznie przy włączonej drugiej Jirze. Dodaje
-brakujące wartości, pomija zgodne i zgłasza różnice do ręcznego rozwiązania.
+`dev.this-is-fine.this-is-logged.sync` istnieje wyłącznie przy włączonej drugiej Jirze. Dopisuje
+różnicę, gdy cel ma mniej czasu niż źródło, pomija zgodne dni i zgłasza do ręcznego rozwiązania
+przypadki, w których cel ma więcej czasu.
 
 ### Menu
 
@@ -124,9 +125,10 @@ Wyłącz synchronizację w ustawieniach. Monitoring nie wymaga celu.
 
 Zapisz ustawienia ponownie. Aplikacja zatrzyma i usunie agent synchronizacji.
 
-### Automatyzacja zgłasza różnicę
+### Automatyzacja zgłasza kolizję
 
-Nic nie zostało nadpisane. Otwórz synchronizację interaktywną i wybierz decyzję dla wskazanego dnia.
+Jira docelowa ma dla wskazanego dnia więcej czasu niż główna. Nic nie zostało nadpisane. Otwórz
+synchronizację interaktywną i wybierz decyzję.
 
 ### Brak służbowego kalendarza na liście
 
