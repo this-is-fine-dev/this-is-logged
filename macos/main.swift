@@ -224,11 +224,13 @@ private func menuIcon() -> NSImage? {
 }
 
 private let weekendMessages = ["nadgodzinki?", "nie tyraj tyle", "jebać biedę?", "samo się nie zrobi"]
+private let morningMessages = ["daj pospać", "Jira też śpi", "najpierw kawusia", "od ósmej, szefie"]
 private let noDataMessages = ["Jira śpi?", "cisza w eterze", "brak meldunku", "gdzie VPN?"]
 
 private func weekendMessage(day: Int) -> String { weekendMessages[day % weekendMessages.count] }
-private func noDataMessage(day: Int, missingDays: Int) -> String {
-  missingDays == 0 ? " \(noDataMessages[day % noDataMessages.count])" : " braki: \(missingDays)"
+private func noDataMessage(day: Int, hour: Int, missingDays: Int) -> String {
+  let messages = hour < 8 ? morningMessages : noDataMessages
+  return missingDays == 0 ? " \(messages[day % messages.count])" : " braki: \(missingDays)"
 }
 
 private func statusBarTitle(seconds: Int, weekendText: String?, missingDays: Int) -> String {
@@ -704,6 +706,7 @@ private func todayPeriod() -> String {
     let showTarget = status?.syncEnabled ?? configuredSyncEnabled
     let isWeekend = Calendar.current.isDateInWeekend(now)
     let currentDay = LocalDay(now)
+    let currentHour = Calendar.current.component(.hour, from: now)
     let today = currentToday(status, on: currentDay)
     let cachedDayIsClosed = status?.today.map { $0.to < currentDay.description } ?? false
     let weekendText = isWeekend ? weekendMessage(day: Calendar.current.component(.day, from: now)) : nil
@@ -775,14 +778,14 @@ private func todayPeriod() -> String {
       } else {
         setWaiting(monthStatus, label: "Miesiąc")
       }
-      item.button?.title = noDataMessage(day: currentDay.day, missingDays: missingDays)
+      item.button?.title = noDataMessage(day: currentDay.day, hour: currentHour, missingDays: missingDays)
     } else {
       todayStatus.title = "\(dayLabel(currentDay)) · czekam na dane"
       setDetails(todayStatus, ["Czekam na pierwszy odczyt z Jiry."])
       for (line, label) in [(yesterdayStatus, "Poprzedni dzień pracy"), (weekStatus, "Tydzień"), (monthStatus, "Miesiąc")] {
         setWaiting(line, label: label)
       }
-      item.button?.title = noDataMessage(day: currentDay.day, missingDays: missingDays)
+      item.button?.title = noDataMessage(day: currentDay.day, hour: currentHour, missingDays: missingDays)
     }
     reminderSchedule.title = isWeekend ? "Przypomnienia wrócą w poniedziałek" : "Przypomnienie \(configuredReminderTime)"
     if configuredSyncEnabled {
@@ -1298,8 +1301,10 @@ if let notify = arguments.firstIndex(of: "--notify"), arguments.indices.contains
     $0.action == #selector(NSText.paste(_:)) && $0.key == "v" && $0.modifiers == .command
   }, "paste shortcut")
   precondition((0..<8).map(weekendMessage) == weekendMessages + weekendMessages, "weekend message rotation")
-  precondition((0..<8).map { noDataMessage(day: $0, missingDays: 0) } == (noDataMessages + noDataMessages).map { " \($0)" }, "no-data message rotation")
-  precondition(noDataMessage(day: 7, missingDays: 2) == " braki: 2", "missing reports stay visible without current data")
+  precondition((0..<8).map { noDataMessage(day: $0, hour: 7, missingDays: 0) } == (morningMessages + morningMessages).map { " \($0)" }, "morning message rotation")
+  precondition(noDataMessage(day: 7, hour: 7, missingDays: 0) == " od ósmej, szefie", "morning message before work")
+  precondition(noDataMessage(day: 7, hour: 8, missingDays: 0) == " gdzie VPN?", "no-data message after work starts")
+  precondition(noDataMessage(day: 7, hour: 7, missingDays: 2) == " braki: 2", "missing reports stay visible before work")
   precondition(statusBarTitle(seconds: 0, weekendText: "nadgodzinki?", missingDays: 0) == " nadgodzinki?", "weekend easter egg")
   precondition(statusBarTitle(seconds: 0, weekendText: "nadgodzinki?", missingDays: 2) == " braki: 2", "weekend warning")
   let closedDays = PeriodStatus(from: "2026-08-31", to: "2026-09-03", workingDays: 4, sourceSeconds: 115_200, targetSeconds: 115_200, missing: [], differences: [])
