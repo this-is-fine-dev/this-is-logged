@@ -64,6 +64,7 @@ public enum ClaudeActivityError: LocalizedError {
 public final class ActivityStore: @unchecked Sendable {
   public static let defaultFile = SettingsStore.defaultDirectory.appendingPathComponent("activity.sqlite")
   fileprivate static let capturedEventNames: Set<String> = ["UserPromptSubmit", "Stop"]
+  private static let discardedIssue = "__IGNORED__"
 
   private let file: URL
 
@@ -112,11 +113,12 @@ public final class ActivityStore: @unchecked Sendable {
     guard UUID(uuidString: eventID) != nil else { throw ClaudeActivityError.invalidHook }
     return try withDatabase { database in
       var statement: OpaquePointer?
-      guard sqlite3_prepare_v2(database, "DELETE FROM activity_events WHERE id = ?", -1, &statement, nil) == SQLITE_OK else {
+      guard sqlite3_prepare_v2(database, "UPDATE activity_events SET issue_key = ?, text = NULL WHERE id = ? AND kind = 'UserPromptSubmit'", -1, &statement, nil) == SQLITE_OK else {
         throw databaseError(database)
       }
       defer { sqlite3_finalize(statement) }
-      bind(eventID, to: statement, at: 1)
+      bind(Self.discardedIssue, to: statement, at: 1)
+      bind(eventID, to: statement, at: 2)
       guard sqlite3_step(statement) == SQLITE_DONE else { throw databaseError(database) }
       return sqlite3_changes(database) == 1
     }
@@ -155,15 +157,12 @@ public final class ActivityStore: @unchecked Sendable {
     let prompts = events.filter { $0.kind == "UserPromptSubmit" }
     var seconds: [String: Double] = [:]
 
-    // ponytail: O(n²) is intentional for a local daily log; index stop events if a day reaches thousands of prompts.
     for (index, prompt) in prompts.enumerated() {
       let nextPrompt = prompts.indices.contains(index + 1) ? prompts[index + 1].occurredAt : end
-      let stop = events.first {
-        $0.kind == "Stop" && $0.sessionID == prompt.sessionID && $0.occurredAt > prompt.occurredAt
-      }?.occurredAt ?? end
-      let finish = [nextPrompt, stop, prompt.occurredAt.addingTimeInterval(30 * 60)].min()!
+      let finish = min(nextPrompt, prompt.occurredAt.addingTimeInterval(30 * 60))
       let duration = max(0, finish.timeIntervalSince(prompt.occurredAt))
-      seconds[prompt.issueKey ?? "Nieprzypisane", default: 0] += duration
+      let issue = prompt.issueKey ?? "Nieprzypisane"
+      if issue != Self.discardedIssue { seconds[issue, default: 0] += duration }
     }
 
     let trackedSeconds = seconds.values.reduce(0, +)
@@ -185,7 +184,11 @@ public final class ActivityStore: @unchecked Sendable {
       if right.issueKey == "Nieprzypisane" { return true }
       return left.minutes == right.minutes ? left.issueKey < right.issueKey : left.minutes > right.minutes
     }
-    return DailyActivity(day: Self.dayFormatter.string(from: start), events: events, allocations: allocations)
+    return DailyActivity(
+      day: Self.dayFormatter.string(from: start),
+      events: events.filter { $0.issueKey != Self.discardedIssue },
+      allocations: allocations
+    )
   }
 
   private func events(from start: Date, to end: Date) throws -> [ActivityEvent] {
@@ -429,7 +432,7 @@ public struct ClaudeMCPServer: Sendable {
       ]],
     ],
     [
-      "name": "discard_event", "description": "Delete the current prompt when it is only chatter, status checking, or other noise unrelated to work analysis.",
+      "name": "discard_event", "description": "Remove the current prompt content from analysis while retaining only its timestamp as a time boundary.",
       "inputSchema": ["type": "object", "properties": [
         "event_id": ["type": "string"],
       ], "required": ["event_id"]],

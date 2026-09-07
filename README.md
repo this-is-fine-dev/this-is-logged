@@ -105,13 +105,17 @@ Opcję **Zbieraj aktywność z Claude Code** włącza się w ustawieniach aplika
 Menu **Aktywność Claude Code…** otwiera dzienny podgląd sesji ze wszystkich worktree. Branch lub
 treść w formacie `ABC-123` daje automatyczne przypisanie. Podział pokazuje wyłącznie czas wynikający
 z zebranych zdarzeń, zaokrąglony globalnie do 5 minut — aplikacja nie dopełnia go sztucznie do 8 h.
+Odcinek trwa od wysłania polecenia do następnego polecenia, dzięki czemu obejmuje także czytanie
+odpowiedzi, analizę zmian i pisanie kolejnej wiadomości. Po 30 minutach bez kolejnej aktywności jest
+automatycznie zamykany.
 
 Niżej znajduje się oś ostatnich 50 istotnych zdarzeń z timestampami `HH:mm:ss`. Pełna liczba zdarzeń
 nadal bierze udział w obliczeniu czasu, ale nie tworzy setek kontrolek w oknie. Ten moduł działa
 wyłącznie analitycznie: nie zawiera przycisku, kodu ani narzędzia MCP zapisującego worklogi do Jiry.
 
 Przy każdym nowym poleceniu Claude ocenia tylko bieżącą wiadomość, którą już ma w kontekście. Może
-przypisać ją do zadania albo usunąć jako szum; nie pobiera w tym celu dziennej historii. Aplikacja nie
+przypisać ją do zadania albo usunąć jej treść jako szum, zachowując sam timestamp jako granicę czasu;
+nie pobiera w tym celu dziennej historii. Aplikacja nie
 zapisuje odpowiedzi, narzędzi ani surowych payloadów, skraca polecenia do 1000 znaków i utrzymuje
 31-dniową retencję. Awaryjny odczyt MCP zwraca najwyżej 50 wpisów i po 500 znaków tekstu.
 

@@ -189,7 +189,7 @@ try activityStore.suggest(eventIDs: [secondActivity.eventID], issueKey: "DEF-2",
 let activity = try activityStore.activity(on: activityDay)
 precondition(firstActivity.issueKey == "ABC-123" && activity.events.count == 4)
 precondition(activity.events.allSatisfy { ["UserPromptSubmit", "Stop"].contains($0.kind) })
-precondition(activity.allocations.reduce(0) { $0 + $1.minutes } == 30)
+precondition(activity.allocations.reduce(0) { $0 + $1.minutes } == 60)
 precondition(activity.allocations.allSatisfy { $0.minutes % 5 == 0 })
 precondition(activity.allocations.contains { $0.issueKey == "ABC-123" })
 precondition(activity.allocations.contains { $0.issueKey == "DEF-2" })
@@ -200,8 +200,14 @@ for index in 0..<6 {
   _ = try burstStore.recordClaudeHook(hook("UserPromptSubmit", session: "burst-\(index)", text: "ABC-123"), now: prompt)
   _ = try burstStore.recordClaudeHook(hook("Stop", session: "burst-\(index)"), now: prompt.addingTimeInterval(50))
 }
-let burst = try burstStore.activity(on: activityDay)
+let burst = try burstStore.activity(on: activityDay, now: activityDay.addingTimeInterval(5 * 60 + 50))
 precondition(burst.allocations.first { $0.issueKey == "ABC-123" }?.minutes == 5)
+let readingStore = ActivityStore(file: activityDirectory.appendingPathComponent("reading.sqlite"))
+_ = try readingStore.recordClaudeHook(hook("UserPromptSubmit", session: "reading", text: "READ-1"), now: activityDay)
+_ = try readingStore.recordClaudeHook(hook("Stop", session: "reading"), now: activityDay.addingTimeInterval(60))
+_ = try readingStore.recordClaudeHook(hook("UserPromptSubmit", session: "reading", text: "READ-1"), now: activityDay.addingTimeInterval(10 * 60))
+let reading = try readingStore.activity(on: activityDay, now: activityDay.addingTimeInterval(10 * 60 + 1))
+precondition(reading.allocations == [ActivityAllocation(issueKey: "READ-1", minutes: 10, evidence: 2)])
 let liveStore = ActivityStore(file: activityDirectory.appendingPathComponent("live.sqlite"))
 _ = try liveStore.recordClaudeHook(hook("UserPromptSubmit", session: "live", text: "LIVE-1"), now: activityDay)
 let live = try liveStore.activity(on: activityDay, now: activityDay.addingTimeInterval(4 * 60))
@@ -209,7 +215,7 @@ precondition(live.allocations == [ActivityAllocation(issueKey: "LIVE-1", minutes
 let disposable = try liveStore.recordClaudeHook(hook("UserPromptSubmit", session: "noise", text: "hej"), now: activityDay.addingTimeInterval(5 * 60))
 let discarded = try liveStore.discard(eventID: disposable.eventID)
 let afterDiscard = try liveStore.activity(on: activityDay)
-precondition(discarded && afterDiscard.events.allSatisfy { $0.id != disposable.eventID })
+precondition(discarded && afterDiscard.events.allSatisfy { $0.id != disposable.eventID } && afterDiscard.allocations == live.allocations)
 
 let compactStore = ActivityStore(file: activityDirectory.appendingPathComponent("compact.sqlite"))
 _ = try compactStore.recordClaudeHook(
