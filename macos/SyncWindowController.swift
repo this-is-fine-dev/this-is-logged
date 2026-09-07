@@ -193,14 +193,27 @@ import ThisIsLoggedCore
     Task {
       do {
         let result = try await engine.execute(plan, actions: actions)
-        progress.stopAnimation(nil)
-        feedback.textColor = .systemGreen
-        feedback.stringValue = "Zapisano \(result.writtenDays) dni, \(hours(result.writtenSeconds)) h."
-        completion()
+        do {
+          let refreshedPlan = try await engine.syncPlan(from: plan.from, to: plan.to)
+          didExecute(result, refreshedPlan: refreshedPlan)
+        } catch {
+          progress.stopAnimation(nil)
+          feedback.textColor = .systemOrange
+          feedback.stringValue = "Zapisano \(result.writtenDays) dni, \(hours(result.writtenSeconds)) h, ale nie udało się potwierdzić nowych wartości. Otwórz okno ponownie."
+          completion()
+        }
       } catch {
         show(error: "Część dni mogła zostać zapisana. \(error.localizedDescription)")
       }
     }
+  }
+
+  private func didExecute(_ result: SyncResult, refreshedPlan: SyncPlan) {
+    plan = refreshedPlan
+    render(refreshedPlan)
+    feedback.textColor = .systemGreen
+    feedback.stringValue = "Zapisano \(result.writtenDays) dni, \(hours(result.writtenSeconds)) h · dane potwierdzone w Jirze."
+    completion()
   }
 
   private func show(error: String) {
@@ -229,6 +242,17 @@ import ThisIsLoggedCore
       window?.minSize.width == 620 && executeButton.frame.height > 0 && rows.frame.width > 0 && rows.frame.height > 30 &&
         renderedViews.count == 8 && renderedViews.allSatisfy { $0.frame.height > 0 },
       "Okno synchronizacji ma nieprawidłowy układ"
+    )
+    let topUpPlan = try! JSONDecoder().decode(SyncPlan.self, from: Data(#"{"from":"2026-09-07","to":"2026-09-07","targetIssue":"AUT-1","items":[{"day":"2026-09-07","sourceSeconds":28800,"targetSeconds":14400,"issueKeys":["RPR-1"],"targetWorklogIDs":["old-1"],"state":"add"}]}"#.utf8))
+    render(topUpPlan)
+    let syncedPlan = try! JSONDecoder().decode(SyncPlan.self, from: Data(#"{"from":"2026-09-07","to":"2026-09-07","targetIssue":"AUT-1","items":[{"day":"2026-09-07","sourceSeconds":28800,"targetSeconds":28800,"issueKeys":["RPR-1"],"targetWorklogIDs":["old-1","new-1"],"state":"synced"}]}"#.utf8))
+    didExecute(SyncResult(writtenDays: 1, writtenSeconds: 14400, collisionsSkipped: 0), refreshedPlan: syncedPlan)
+    let completedRow = rows.arrangedSubviews[1] as! NSStackView
+    let completedDecision = completedRow.arrangedSubviews[3] as! NSPopUpButton
+    precondition(
+      (completedRow.arrangedSubviews[2] as! NSTextField).stringValue == "8.00 h" &&
+        completedDecision.titleOfSelectedItem == "Pomiń — zgodne" && !executeButton.isEnabled,
+      "Okno nie pokazuje wyniku zakończonej synchronizacji"
     )
     print("ok")
   }
