@@ -133,9 +133,9 @@ MCP udostępnia cztery lokalne narzędzia: `get_activity`, `discard_event`, `sug
 
 ### Spotkania z Kalendarza macOS
 
-W ustawieniach można włączyć spotkania, wybrać służbowy kalendarz oraz zadanie zbiorcze, domyślnie
+W ustawieniach można włączyć spotkania, wybrać konto służbowego kalendarza oraz zadanie zbiorcze, domyślnie
 `RPR-18`. macOS prosi wtedy o jednorazowy dostęp do kalendarza. Aplikacja czyta wyłącznie wydarzenia
-z wybranego kalendarza i nie modyfikuje ich.
+ze wszystkich kalendarzy wybranego konta i nie modyfikuje ich.
 
 Do podziału czasu trafiają trwające i zakończone wydarzenia w godzinach pracy. Pomijane są wpisy
 całodniowe, anulowane, odrzucone, wolne i nieobecności. Nakładające się wydarzenia są scalane,

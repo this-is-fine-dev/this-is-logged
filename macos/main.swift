@@ -613,7 +613,7 @@ private func todayPeriod() -> String {
     calendarToggle.action = #selector(toggleCalendar)
     calendarPopup.widthAnchor.constraint(equalToConstant: 365).isActive = true
     root.addArrangedSubview(settingsBox("Analiza czasu", [
-      ("", claudeToggle), ("", calendarToggle), ("Kalendarz", calendarPopup),
+      ("", claudeToggle), ("", calendarToggle), ("Konto", calendarPopup),
       ("Zadanie zbiorcze", catchAllIssueField), ("", claudeDescription),
     ]))
 
@@ -633,7 +633,7 @@ private func todayPeriod() -> String {
     syncToggle.state = configuredSyncEnabled ? .on : .off
     claudeToggle.state = configuredClaudeEnabled ? .on : .off
     calendarToggle.state = configuredCalendarEnabled ? .on : .off
-    populateCalendars(selected: savedSetting("CALENDAR_ID", fallback: ""))
+    populateCalendarSources(selected: savedSetting("CALENDAR_ID", fallback: ""))
     toggleSynchronization()
   }
 
@@ -671,9 +671,9 @@ private func todayPeriod() -> String {
     Task {
       do {
         guard try await CalendarIntegration.requestAccess() else { throw CalendarIntegrationError.accessDenied }
-        populateCalendars(selected: calendarPopup.selectedItem?.representedObject as? String ?? "")
+        populateCalendarSources(selected: calendarPopup.selectedItem?.representedObject as? String ?? "")
         settingsFeedback.textColor = .secondaryLabelColor
-        settingsFeedback.stringValue = "Wybierz służbowy kalendarz i zapisz ustawienia."
+        settingsFeedback.stringValue = "Wybierz konto z kalendarzami służbowymi i zapisz ustawienia."
       } catch {
         calendarToggle.state = .off
         calendarPopup.isEnabled = false
@@ -683,18 +683,19 @@ private func todayPeriod() -> String {
     }
   }
 
-  private func populateCalendars(selected identifier: String) {
+  private func populateCalendarSources(selected identifier: String) {
     calendarPopup.removeAllItems()
-    let calendars = CalendarIntegration.calendars()
-    for calendar in calendars {
-      calendarPopup.addItem(withTitle: calendar.title)
-      calendarPopup.lastItem?.representedObject = calendar.identifier
+    let sources = CalendarIntegration.sources()
+    for source in sources {
+      calendarPopup.addItem(withTitle: source.title)
+      calendarPopup.lastItem?.representedObject = source.identifier
     }
-    if let index = calendarPopup.itemArray.firstIndex(where: { ($0.representedObject as? String) == identifier }) {
+    let selectedSource = CalendarIntegration.sourceIdentifier(for: identifier) ?? identifier
+    if let index = calendarPopup.itemArray.firstIndex(where: { ($0.representedObject as? String) == selectedSource }) {
       calendarPopup.selectItem(at: index)
     }
-    if calendarPopup.numberOfItems == 0 { calendarPopup.addItem(withTitle: "Brak dostępu do kalendarzy") }
-    calendarPopup.isEnabled = calendarToggle.state == .on && !calendars.isEmpty
+    if calendarPopup.numberOfItems == 0 { calendarPopup.addItem(withTitle: "Brak dostępu do kont kalendarza") }
+    calendarPopup.isEnabled = calendarToggle.state == .on && !sources.isEmpty
   }
 
   func menuWillOpen(_ menu: NSMenu) { refresh() }
@@ -1012,7 +1013,7 @@ private func todayPeriod() -> String {
     claudeToggle.state = values["CLAUDE_ENABLED"] == "1" ? .on : .off
     catchAllIssueField.stringValue = values["CATCH_ALL_ISSUE"] ?? "RPR-18"
     calendarToggle.state = values["CALENDAR_ENABLED"] == "1" ? .on : .off
-    populateCalendars(selected: values["CALENDAR_ID"] ?? "")
+    populateCalendarSources(selected: values["CALENDAR_ID"] ?? "")
     toggleSynchronization()
     settingsFeedback.textColor = .secondaryLabelColor
     settingsFeedback.stringValue = configurationComplete(values) ? "Zmiany zostaną sprawdzone w Jirze przed zapisem." : "Uzupełnij Jirę główną, aby uruchomić monitoring."
@@ -1109,7 +1110,7 @@ private func todayPeriod() -> String {
     }
     if calendarIntegration && calendarIdentifier.isEmpty {
       settingsFeedback.textColor = .systemRed
-      settingsFeedback.stringValue = "Nadaj dostęp i wybierz służbowy kalendarz."
+      settingsFeedback.stringValue = "Nadaj dostęp i wybierz konto kalendarza służbowego."
       return
     }
     guard (!synchronization || clockParts(sync) != nil), clockParts(reminder) != nil,

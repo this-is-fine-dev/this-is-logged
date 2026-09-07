@@ -70,8 +70,8 @@ Kliknięcie akcji w powiadomieniu o kolizji otwiera to samo okno.
 
 ## Kalendarz i analiza czasu
 
-Po włączeniu integracji aplikacja prosi macOS o dostęp, pokazuje lokalne kalendarze wraz z nazwą
-ich konta i zapisuje identyfikator wybranego kalendarza. Spotkania są odczytywane tylko w godzinach
+Po włączeniu integracji aplikacja prosi macOS o dostęp, pokazuje lokalne konta kalendarzy i zapisuje
+identyfikator wybranego konta. Spotkania ze wszystkich jego kalendarzy są odczytywane tylko w godzinach
 pracy, scalane przy nakładaniu i rezerwowane dla zadania zbiorczego przed estymacją aktywności Claude.
 Ten sam wynik jest używany w oknie **Analiza czasu…** i przez narzędzie MCP `review_day`.
 

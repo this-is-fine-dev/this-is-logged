@@ -48,6 +48,11 @@ if rg -q 'Timer\.scheduledTimer\(timeInterval:.*#selector\(refresh\)' "$PROJECT_
   exit 1
 fi
 
+if rg -n '^  override var isFlipped' "$PROJECT_ROOT/macos"; then
+  echo "actor-isolated AppKit isFlipped override can crash while a window is released" >&2
+  exit 1
+fi
+
 if rg -q 'CommandLine\.arguments' "$PROJECT_ROOT/macos/main.swift"; then
   echo "CommandLine.arguments is not concurrency-safe on the release runner" >&2
   exit 1

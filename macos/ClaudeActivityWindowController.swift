@@ -395,5 +395,5 @@ import ThisIsLoggedCore
 }
 
 private final class FlippedActivityStackView: NSStackView {
-  override var isFlipped: Bool { true }
+  nonisolated override var isFlipped: Bool { true }
 }

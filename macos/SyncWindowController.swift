@@ -228,5 +228,5 @@ import ThisIsLoggedCore
 }
 
 private final class FlippedView: NSView {
-  override var isFlipped: Bool { true }
+  nonisolated override var isFlipped: Bool { true }
 }

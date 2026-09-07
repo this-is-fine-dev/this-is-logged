@@ -120,7 +120,7 @@ public enum SettingsError: LocalizedError {
     case .targetEmailRequired: "Docelowa Jira Cloud wymaga emaila konta Atlassian."
     case .invalidSchedule: "Podaj godziny w formacie GG:MM i pełny dzień od 0 do 24 h."
     case .invalidActivity: "Podaj poprawne zadanie zbiorcze, np. RPR-18."
-    case .invalidCalendar: "Wybierz kalendarz ze spotkaniami."
+    case .invalidCalendar: "Wybierz konto kalendarza ze spotkaniami."
     }
   }
 }
