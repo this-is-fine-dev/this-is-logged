@@ -138,13 +138,13 @@ import ThisIsLoggedCore
     ], widths: [330, 70, 90, 160]))
     for allocation in activity.allocations {
       let evidence = allocation.evidence == 0 ? "bez wskazań" : "\(allocation.evidence) wskazań"
-      let task = label(Self.taskLabel(allocation.issueKey, title: issueTitles[allocation.issueKey]))
+      let task = wrappingLabel(Self.taskLabel(allocation.issueKey, title: issueTitles[allocation.issueKey]))
       task.toolTip = task.stringValue
       issueFields[allocation.issueKey] = task
       let item = row([
         task, label(Self.duration(allocation.minutes)),
         label(evidence), label(signalRange(for: allocation.issueKey, events: activity.events)),
-      ], widths: [330, 70, 90, 160])
+      ], widths: [330, 70, 90, 160], alignment: .top)
       allocationRows.append(item)
       rows.addArrangedSubview(item)
     }
@@ -223,6 +223,7 @@ import ThisIsLoggedCore
         if let field = self.issueFields[issue] {
           field.stringValue = Self.taskLabel(issue, title: title)
           field.toolTip = field.stringValue
+          self.resizeDocument()
         }
       }
     }
@@ -241,10 +242,12 @@ import ThisIsLoggedCore
     rows.setFrameSize(NSSize(width: max(686, scroll.contentSize.width), height: rows.fittingSize.height))
   }
 
-  private func row(_ views: [NSView], widths: [CGFloat]) -> NSView {
+  private func row(
+    _ views: [NSView], widths: [CGFloat], alignment: NSLayoutConstraint.Attribute = .centerY
+  ) -> NSView {
     let result = NSStackView(views: views)
     result.orientation = .horizontal
-    result.alignment = .centerY
+    result.alignment = alignment
     result.spacing = 12
     for (view, width) in zip(views, widths) {
       view.widthAnchor.constraint(equalToConstant: width).isActive = true
@@ -256,6 +259,14 @@ import ThisIsLoggedCore
     let field = NSTextField(labelWithString: value)
     field.font = header ? .systemFont(ofSize: 11, weight: .semibold) : .systemFont(ofSize: 13)
     field.lineBreakMode = .byTruncatingTail
+    return field
+  }
+
+  private func wrappingLabel(_ value: String) -> NSTextField {
+    let field = NSTextField(wrappingLabelWithString: value)
+    field.font = .systemFont(ofSize: 13)
+    field.maximumNumberOfLines = 0
+    field.lineBreakMode = .byWordWrapping
     return field
   }
 
@@ -275,7 +286,10 @@ import ThisIsLoggedCore
   }
 
   private static func taskLabel(_ issue: String, title: String?) -> String {
-    title.map { "\(issue) · \($0)" } ?? issue
+    guard let title, !title.isEmpty else { return issue }
+    let prefixes = ["\(issue) — ", "\(issue) – ", "\(issue) - ", "\(issue): ", "\(issue) · "]
+    let summary = prefixes.first(where: title.hasPrefix).map { String(title.dropFirst($0.count)) } ?? title
+    return summary.isEmpty ? issue : "\(issue) · \(summary)"
   }
 
   private static func eventName(_ kind: String) -> String {
@@ -301,6 +315,7 @@ import ThisIsLoggedCore
 
   func layoutSelfcheck() {
     window?.contentView?.layoutSubtreeIfNeeded()
+    issueTitles["ABC-1"] = "ABC-1 — Bardzo długi tytuł zadania, który ma być widoczny w całości i zawinąć się na kolejny wiersz"
     render(DailyActivity(day: "2026-09-07", events: [], allocations: [
       ActivityAllocation(issueKey: "ABC-1", minutes: 15, evidence: 3),
       ActivityAllocation(issueKey: "ABC-2", minutes: 15, evidence: 3),
@@ -312,9 +327,11 @@ import ThisIsLoggedCore
     let frames = allocationRows.map { $0.convert($0.bounds, to: rows) }.sorted { $0.minY < $1.minY }
     let separated = frames.allSatisfy { $0.width >= 650 && $0.height >= 15 } &&
       zip(frames, frames.dropFirst()).allSatisfy { $0.maxY <= $1.minY }
+    let task = issueFields["ABC-1"]
     precondition(
       window?.minSize.width == 700 && rows.isFlipped && rows.frame.height > 100 && safety.frame.height > 0 && separated &&
-        Self.taskLabel("ABC-1", title: "Napraw formularz") == "ABC-1 · Napraw formularz",
+        task?.maximumNumberOfLines == 0 && task?.lineBreakMode == .byWordWrapping && (task?.frame.height ?? 0) > 20 &&
+        Self.taskLabel("ABC-1", title: "ABC-1 — Napraw formularz") == "ABC-1 · Napraw formularz",
       "Okno aktywności ma nieprawidłowy układ"
     )
     print("ok")
