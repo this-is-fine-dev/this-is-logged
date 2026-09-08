@@ -108,6 +108,9 @@ Opcję **Zbieraj aktywność z Claude Code** włącza się w ustawieniach aplika
 Menu **Analiza czasu…** otwiera dzienny podgląd sesji ze wszystkich worktree. Branch lub
 treść w formacie `ABC-123` daje automatyczne przypisanie, a kolejne polecenia w tej samej sesji
 dziedziczą ostatnie pewne zadanie. Podział jest zaokrąglany globalnie do 5 minut.
+Podgląd pobiera też worklogi z głównej Jiry: już zapisany czas jest przypięty do właściwych zadań,
+odejmowany od pozostałej części dnia i oznaczony w kolumnie **Podstawa**. Dzięki temu aktywność
+Claude ani spotkania z Kalendarza nie proponują ponownie godzin, które są już zaraportowane.
 Odcinek trwa od wysłania polecenia do następnego polecenia, dzięki czemu obejmuje także czytanie
 odpowiedzi, analizę zmian i pisanie kolejnej wiadomości. Po 30 minutach bez kolejnej aktywności jest
 automatycznie zamykany.

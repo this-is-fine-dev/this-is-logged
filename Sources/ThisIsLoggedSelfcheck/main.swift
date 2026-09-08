@@ -209,6 +209,16 @@ precondition(activity.allocations.reduce(0) { $0 + $1.minutes } == 60)
 precondition(activity.allocations.allSatisfy { $0.minutes % 5 == 0 })
 precondition(activity.allocations.contains { $0.issueKey == "ABC-123" })
 precondition(activity.allocations.contains { $0.issueKey == "DEF-2" })
+let loggedOtherTask = try activityStore.activity(
+  on: activityDay,
+  now: activityDay.addingTimeInterval(2 * 60 * 60),
+  targetMinutes: 80,
+  loggedSecondsByIssue: ["RPR-18": 15 * 60]
+)
+precondition(loggedOtherTask.allocations.reduce(0) { $0 + $1.minutes } == 80)
+precondition(loggedOtherTask.allocations.contains {
+  $0.issueKey == "RPR-18" && $0.minutes == 15 && $0.loggedMinutes == 15
+})
 
 let burstStore = ActivityStore(file: activityDirectory.appendingPathComponent("burst.sqlite"))
 for index in 0..<6 {
@@ -227,6 +237,16 @@ precondition(reading.allocations == [ActivityAllocation(issueKey: "READ-1", minu
 let normalized = try readingStore.activity(on: activityDay, now: activityDay.addingTimeInterval(60 * 60), targetMinutes: 60)
 precondition(normalized.allocations == [ActivityAllocation(issueKey: "READ-1", minutes: 60, evidence: 2)])
 precondition(normalized.observedMinutes == 40 && normalized.inferredMinutes == 20)
+let partlyLogged = try readingStore.activity(
+  on: activityDay,
+  now: activityDay.addingTimeInterval(60 * 60),
+  targetMinutes: 60,
+  loggedSecondsByIssue: ["READ-1": 15 * 60]
+)
+precondition(partlyLogged.allocations == [
+  ActivityAllocation(issueKey: "READ-1", minutes: 60, evidence: 2, loggedMinutes: 15),
+])
+precondition(partlyLogged.loggedMinutes == 15 && partlyLogged.observedMinutes == 25 && partlyLogged.inferredMinutes == 20)
 let meeting = DateInterval(
   start: activityDay.addingTimeInterval(15 * 60),
   end: activityDay.addingTimeInterval(45 * 60)
@@ -247,6 +267,19 @@ precondition(calendarActivity.allocations == [
   ActivityAllocation(issueKey: "READ-1", minutes: 15, evidence: 2),
 ])
 precondition(calendarActivity.observedMinutes == 60 && calendarActivity.inferredMinutes == 0)
+let loggedCalendarActivity = try readingStore.activity(
+  on: activityDay,
+  now: activityDay.addingTimeInterval(60 * 60),
+  targetMinutes: 60,
+  reservedIntervals: [meeting, overlappingMeeting],
+  loggedSecondsByIssue: ["RPR-18": 30 * 60],
+  fallbackIssue: "RPR-18"
+)
+precondition(loggedCalendarActivity.allocations == [
+  ActivityAllocation(issueKey: "RPR-18", minutes: 45, evidence: 2, loggedMinutes: 30),
+  ActivityAllocation(issueKey: "READ-1", minutes: 15, evidence: 2),
+])
+precondition(loggedCalendarActivity.loggedMinutes == 30 && loggedCalendarActivity.observedMinutes == 30)
 let generalStore = ActivityStore(file: activityDirectory.appendingPathComponent("general.sqlite"))
 _ = try generalStore.recordClaudeHook(hook("UserPromptSubmit", session: "general", text: "Porozmawiajmy o architekturze"), now: activityDay)
 let generalActivity = try generalStore.activity(
@@ -337,6 +370,8 @@ Task.detached {
     precondition(user == JiraUser(id: "u1", displayName: "Fine"))
     let days = try await client.dailyWorklogs(userID: user.id, from: LocalDay("2026-09-01")!, to: LocalDay("2026-09-30")!)
     precondition(days == [LocalDay("2026-09-01")!: DayTotal(seconds: 5400, issueKeys: ["WP-1", "WP-2"], worklogIDs: ["1", "3"])])
+    let byIssue = try await client.worklogSecondsByIssue(userID: user.id, on: LocalDay("2026-09-01")!)
+    precondition(byIssue == ["WP-1": 3600, "WP-2": 1800])
     let summary = try await client.issueSummary("AUT-1")
     precondition(summary == "AUT-1 — Timesheet")
     try await client.addWorklog(issue: "AUT-1", day: LocalDay("2026-09-01")!, seconds: 5400, comment: "WP-1, WP-2")

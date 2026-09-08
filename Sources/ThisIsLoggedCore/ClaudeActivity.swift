@@ -17,11 +17,13 @@ public struct ActivityAllocation: Codable, Equatable, Sendable {
   public let issueKey: String
   public let minutes: Int
   public let evidence: Int
+  public let loggedMinutes: Int
 
-  public init(issueKey: String, minutes: Int, evidence: Int) {
+  public init(issueKey: String, minutes: Int, evidence: Int, loggedMinutes: Int = 0) {
     self.issueKey = issueKey
     self.minutes = minutes
     self.evidence = evidence
+    self.loggedMinutes = loggedMinutes
   }
 }
 
@@ -31,19 +33,22 @@ public struct DailyActivity: Sendable {
   public let allocations: [ActivityAllocation]
   public let observedMinutes: Int
   public let inferredMinutes: Int
+  public let loggedMinutes: Int
 
   public init(
     day: String,
     events: [ActivityEvent],
     allocations: [ActivityAllocation],
     observedMinutes: Int? = nil,
-    inferredMinutes: Int = 0
+    inferredMinutes: Int = 0,
+    loggedMinutes: Int = 0
   ) {
     self.day = day
     self.events = events
     self.allocations = allocations
     self.observedMinutes = observedMinutes ?? allocations.reduce(0) { $0 + $1.minutes }
     self.inferredMinutes = inferredMinutes
+    self.loggedMinutes = loggedMinutes
   }
 }
 
@@ -188,6 +193,7 @@ public final class ActivityStore: @unchecked Sendable {
     now: Date = Date(),
     targetMinutes: Int? = nil,
     reservedIntervals: [DateInterval] = [],
+    loggedSecondsByIssue: [String: Int] = [:],
     fallbackIssue: String = "Nieprzypisane"
   ) throws -> DailyActivity {
     let calendar = Calendar.current
@@ -215,30 +221,48 @@ public final class ActivityStore: @unchecked Sendable {
       if issue != Self.discardedIssue { seconds[issue, default: 0] += duration }
     }
 
-    let trackedSeconds = seconds.values.reduce(0, +)
+    let loggedUnits = loggedSecondsByIssue.reduce(into: [String: Int]()) { result, item in
+      let value = Int((Double(max(0, item.value)) / 300).rounded())
+      if value > 0 { result[item.key] = value }
+    }
+    let residualSeconds = seconds.reduce(into: [String: Double]()) { result, item in
+      let value = max(0, item.value - Double(loggedUnits[item.key, default: 0] * 300))
+      if value > 0 { result[item.key] = value }
+    }
+    let trackedSeconds = residualSeconds.values.reduce(0, +)
     let observedTaskUnits = trackedSeconds > 0 ? max(1, Int((trackedSeconds / 300).rounded())) : 0
     let reservedUnits = Int((reserved.reduce(0) { $0 + $1.duration } / 300).rounded())
-    let requestedUnits = targetMinutes.map { Int((Double(max(0, $0)) / 5).rounded()) } ?? observedTaskUnits + reservedUnits
+    let uncoveredReservedUnits = max(0, reservedUnits - loggedUnits[fallbackIssue, default: 0])
+    var units = loggedUnits
+    if uncoveredReservedUnits > 0 { units[fallbackIssue, default: 0] += uncoveredReservedUnits }
+    let fixedUnits = units.values.reduce(0, +)
+    let requestedUnits = targetMinutes.map { Int((Double(max(0, $0)) / 5).rounded()) } ?? fixedUnits + observedTaskUnits
     let canInfer = seconds.keys.contains { $0 != "Nieprzypisane" }
-    let requestedTaskUnits = max(0, requestedUnits - reservedUnits)
+    let requestedTaskUnits = max(0, requestedUnits - fixedUnits)
     let trackedTaskUnits = canInfer ? max(observedTaskUnits, requestedTaskUnits) : observedTaskUnits
-    var units: [String: Int] = [:]
-    if trackedTaskUnits > 0, trackedSeconds > 0 {
-      let shares = seconds.map { (key: $0.key, exact: $0.value / trackedSeconds * Double(trackedTaskUnits)) }
-      for share in shares { units[share.key] = Int(floor(share.exact)) }
-      var left = trackedTaskUnits - units.values.reduce(0, +)
+    let distributionSeconds = trackedSeconds > 0 ? residualSeconds : seconds
+    let distributionTotal = distributionSeconds.values.reduce(0, +)
+    if trackedTaskUnits > 0, distributionTotal > 0 {
+      let shares = distributionSeconds.map { (key: $0.key, exact: $0.value / distributionTotal * Double(trackedTaskUnits)) }
+      var allocatedTaskUnits = 0
+      for share in shares {
+        let value = Int(floor(share.exact))
+        units[share.key, default: 0] += value
+        allocatedTaskUnits += value
+      }
+      var left = trackedTaskUnits - allocatedTaskUnits
       for share in shares.sorted(by: { ($0.exact - floor($0.exact)) > ($1.exact - floor($1.exact)) }) where left > 0 {
         units[share.key, default: 0] += 1
         left -= 1
       }
     }
-    if reservedUnits > 0 { units[fallbackIssue, default: 0] += reservedUnits }
     let allocations = units.filter { $0.value > 0 }.map { key, value in
       let promptEvidence = prompts.filter { ($0.issueKey ?? fallbackIssue) == key }.count
       return ActivityAllocation(
         issueKey: key,
         minutes: value * 5,
-        evidence: promptEvidence + (key == fallbackIssue ? reservedIntervals.count : 0)
+        evidence: promptEvidence + (key == fallbackIssue ? reservedIntervals.count : 0),
+        loggedMinutes: loggedUnits[key, default: 0] * 5
       )
     }.sorted { left, right in
       if left.issueKey == "Nieprzypisane" { return false }
@@ -249,8 +273,9 @@ public final class ActivityStore: @unchecked Sendable {
       day: Self.dayFormatter.string(from: start),
       events: events.filter { $0.issueKey != Self.discardedIssue },
       allocations: allocations,
-      observedMinutes: (observedTaskUnits + reservedUnits) * 5,
-      inferredMinutes: (trackedTaskUnits - observedTaskUnits) * 5
+      observedMinutes: (observedTaskUnits + uncoveredReservedUnits) * 5,
+      inferredMinutes: max(0, trackedTaskUnits - observedTaskUnits) * 5,
+      loggedMinutes: loggedUnits.values.reduce(0, +) * 5
     )
   }
 

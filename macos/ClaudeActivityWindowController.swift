@@ -121,6 +121,8 @@ import ThisIsLoggedCore
     Task.detached {
       var meetings: [CalendarMeeting] = []
       var calendarWarning: String?
+      var loggedSecondsByIssue: [String: Int] = [:]
+      var jiraWarning: String?
       if settings.calendarIntegrationEnabled, let range {
         do {
           meetings = try CalendarIntegration.meetings(
@@ -133,16 +135,24 @@ import ThisIsLoggedCore
         }
       }
       do {
+        let client = JiraClient(credentials: settings.source)
+        let user = try await client.currentUser()
+        loggedSecondsByIssue = try await client.worklogSecondsByIssue(userID: user.id, on: LocalDay(date))
+      } catch {
+        jiraWarning = error.localizedDescription
+      }
+      do {
         let activity = try store.activity(
           on: date,
           now: now,
           targetMinutes: target,
           reservedIntervals: meetings.map(\.interval),
+          loggedSecondsByIssue: loggedSecondsByIssue,
           fallbackIssue: settings.catchAllIssue
         )
         await MainActor.run {
           guard Calendar.current.isDate(self.datePicker.dateValue, inSameDayAs: date) else { return }
-          self.render(activity, meetings: meetings, calendarWarning: calendarWarning)
+          self.render(activity, meetings: meetings, calendarWarning: calendarWarning, jiraWarning: jiraWarning)
         }
       } catch {
         await MainActor.run {
@@ -158,6 +168,7 @@ import ThisIsLoggedCore
     _ activity: DailyActivity,
     meetings: [CalendarMeeting] = [],
     calendarWarning: String? = nil,
+    jiraWarning: String? = nil,
     fetchTitles: Bool = true
   ) {
     rows.arrangedSubviews.forEach { rows.removeArrangedSubview($0); $0.removeFromSuperview() }
@@ -173,6 +184,7 @@ import ThisIsLoggedCore
       let meetingCount = allocation.issueKey == settings.catchAllIssue ? meetings.count : 0
       let promptCount = max(0, allocation.evidence - meetingCount)
       let evidence = [
+        allocation.loggedMinutes > 0 ? "\(Self.duration(allocation.loggedMinutes)) Jira" : nil,
         meetingCount > 0 ? "\(meetingCount) spotk." : nil,
         promptCount > 0 ? "\(promptCount) wsk." : nil,
       ].compactMap { $0 }.joined(separator: " · ")
@@ -242,10 +254,13 @@ import ThisIsLoggedCore
     dayTotal.stringValue = "\(Self.duration(total)) / \(Self.duration(target)) h"
     dayTotal.textColor = total == target || target == 0 ? .labelColor : .systemOrange
     let sessions = Set(activity.events.map(\.sessionID)).count
-    dayStatus.textColor = calendarWarning == nil ? .secondaryLabelColor : .systemOrange
+    dayStatus.textColor = calendarWarning == nil && jiraWarning == nil ? .secondaryLabelColor : .systemOrange
     let estimate = activity.inferredMinutes > 0 ? " · +\(Self.duration(activity.inferredMinutes)) estymacji" : ""
-    let warning = calendarWarning.map { " · Kalendarz: \($0)" } ?? ""
-    dayStatus.stringValue = "\(sessions) sesji · \(activity.events.count) zdarzeń · \(Self.duration(activity.observedMinutes)) z aktywności\(estimate)\(warning)"
+    let logged = activity.loggedMinutes > 0 ? " · \(Self.duration(activity.loggedMinutes)) już w Jirze" : ""
+    let warnings = [calendarWarning.map { "Kalendarz: \($0)" }, jiraWarning.map { "Jira: \($0)" }]
+      .compactMap { $0 }.joined(separator: " · ")
+    let warning = warnings.isEmpty ? "" : " · \(warnings)"
+    dayStatus.stringValue = "\(sessions) sesji · \(activity.events.count) zdarzeń\(logged) · \(Self.duration(activity.observedMinutes)) z aktywności\(estimate)\(warning)"
     resizeDocument()
     if fetchTitles { loadTitles(for: activity.allocations.map(\.issueKey)) }
   }

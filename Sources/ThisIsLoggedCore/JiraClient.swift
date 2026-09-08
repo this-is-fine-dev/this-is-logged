@@ -58,6 +58,12 @@ public final class JiraClient: JiraAccess, @unchecked Sendable {
     let timeSpentSeconds: Int
     let comment: String?
   }
+  private struct UserWorklog {
+    let day: LocalDay
+    let issue: String
+    let id: String
+    let seconds: Int
+  }
 
   private let credentials: JiraCredentials
   private let session: URLSession
@@ -74,6 +80,24 @@ public final class JiraClient: JiraAccess, @unchecked Sendable {
   }
 
   public func dailyWorklogs(userID: String, from: LocalDay, to: LocalDay) async throws -> [LocalDay: DayTotal] {
+    var days: [LocalDay: DayTotal] = [:]
+    for worklog in try await userWorklogs(userID: userID, from: from, to: to) {
+      var total = days[worklog.day, default: DayTotal()]
+      total.seconds += worklog.seconds
+      if !total.issueKeys.contains(worklog.issue) { total.issueKeys.append(worklog.issue) }
+      total.worklogIDs.append(worklog.id)
+      days[worklog.day] = total
+    }
+    return days
+  }
+
+  public func worklogSecondsByIssue(userID: String, on day: LocalDay) async throws -> [String: Int] {
+    try await userWorklogs(userID: userID, from: day, to: day).reduce(into: [:]) {
+      $0[$1.issue, default: 0] += $1.seconds
+    }
+  }
+
+  private func userWorklogs(userID: String, from: LocalDay, to: LocalDay) async throws -> [UserWorklog] {
     let jql = "worklogAuthor = currentUser() AND worklogDate >= \"\(from)\" AND worklogDate <= \"\(to)\""
     var issues: [Issue] = []
     var start = 0
@@ -87,18 +111,14 @@ public final class JiraClient: JiraAccess, @unchecked Sendable {
       if page.issues.isEmpty || start >= page.total { break }
     } while true
 
-    var days: [LocalDay: DayTotal] = [:]
+    var result: [UserWorklog] = []
     for issue in issues {
       for worklog in try await worklogs(issue: issue.key) {
         guard worklog.author.id == userID, let day = LocalDay(String(worklog.started.prefix(10))), day >= from, day <= to else { continue }
-        var total = days[day, default: DayTotal()]
-        total.seconds += worklog.timeSpentSeconds
-        if !total.issueKeys.contains(issue.key) { total.issueKeys.append(issue.key) }
-        total.worklogIDs.append(worklog.id)
-        days[day] = total
+        result.append(UserWorklog(day: day, issue: issue.key, id: worklog.id, seconds: worklog.timeSpentSeconds))
       }
     }
-    return days
+    return result
   }
 
   public func issueSummary(_ issue: String) async throws -> String {
