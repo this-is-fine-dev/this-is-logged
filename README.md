@@ -101,12 +101,13 @@ Każdy zapis wymaga końcowego potwierdzenia.
 
 Opcję **Zbieraj aktywność z Claude Code** włącza się w ustawieniach aplikacji. Konfigurator sam:
 
-- instaluje dwa lekkie hooki: wiadomość użytkownika i koniec odpowiedzi;
+- instaluje dwa asynchroniczne hooki: wiadomość użytkownika i koniec odpowiedzi;
 - rejestruje globalny serwer MCP `this-is-logged` dla wszystkich projektów użytkownika;
 - pozwala agentom odczytać wspólną aktywność i zapisać sugestię przypisania do zadania Jiry.
 
 Menu **Analiza czasu…** otwiera dzienny podgląd sesji ze wszystkich worktree. Branch lub
-treść w formacie `ABC-123` daje automatyczne przypisanie. Podział jest zaokrąglany globalnie do 5 minut.
+treść w formacie `ABC-123` daje automatyczne przypisanie, a kolejne polecenia w tej samej sesji
+dziedziczą ostatnie pewne zadanie. Podział jest zaokrąglany globalnie do 5 minut.
 Odcinek trwa od wysłania polecenia do następnego polecenia, dzięki czemu obejmuje także czytanie
 odpowiedzi, analizę zmian i pisanie kolejnej wiadomości. Po 30 minutach bez kolejnej aktywności jest
 automatycznie zamykany.
@@ -119,12 +120,11 @@ Niżej znajduje się oś ostatnich 50 istotnych zdarzeń z timestampami `HH:mm:s
 nadal bierze udział w obliczeniu czasu, ale nie tworzy setek kontrolek w oknie. Ten moduł działa
 wyłącznie analitycznie: nie zawiera przycisku, kodu ani narzędzia MCP zapisującego worklogi do Jiry.
 
-Przy każdym nowym poleceniu Claude ocenia tylko bieżącą wiadomość, którą już ma w kontekście. Może
-przypisać ją do konkretnego zadania albo do skonfigurowanego zadania zbiorczego. Treść usuwa jako
-szum tylko dla testu technicznego, pomyłki lub wiadomości niezwiązanej z pracą;
-nie pobiera w tym celu dziennej historii. Aplikacja nie
-zapisuje odpowiedzi, narzędzi ani surowych payloadów, skraca polecenia do 1000 znaków i utrzymuje
-31-dniową retencję. Awaryjny odczyt MCP zwraca najwyżej 50 wpisów i po 500 znaków tekstu.
+Hook tylko zapisuje sygnał w tle: nie dodaje instrukcji do rozmowy, nie uruchamia modelu i nie
+wywołuje MCP przy każdym poleceniu. Agent korzysta z MCP dopiero na jawną prośbę o analizę lub
+przegląd dnia. Aplikacja nie zapisuje odpowiedzi, narzędzi ani surowych payloadów, skraca polecenia
+do 1000 znaków i utrzymuje 31-dniową retencję. Odczyt MCP zwraca najwyżej 50 wpisów i po 500 znaków
+tekstu.
 
 O ustawionej godzinie przypomnienia aplikacja dołącza informację o gotowej analizie dnia. Przycisk
 **Otwórz analizę** w powiadomieniu prowadzi bezpośrednio do dziennego podsumowania.

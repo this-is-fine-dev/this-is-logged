@@ -256,6 +256,19 @@ let generalActivity = try generalStore.activity(
   fallbackIssue: "RPR-18"
 )
 precondition(generalActivity.allocations == [ActivityAllocation(issueKey: "RPR-18", minutes: 60, evidence: 1)])
+let stickyStore = ActivityStore(file: activityDirectory.appendingPathComponent("sticky.sqlite"))
+_ = try stickyStore.recordClaudeHook(hook("UserPromptSubmit", session: "sticky", text: "Napraw STK-1"), now: activityDay)
+let inherited = try stickyStore.recordClaudeHook(
+  hook("UserPromptSubmit", session: "sticky", text: "Dokończ testy"),
+  now: activityDay.addingTimeInterval(5 * 60)
+)
+precondition(inherited.issueKey == "STK-1")
+try stickyStore.suggest(eventIDs: [inherited.eventID], issueKey: "STK-2")
+let corrected = try stickyStore.recordClaudeHook(
+  hook("UserPromptSubmit", session: "sticky", text: "Jeszcze jedna poprawka"),
+  now: activityDay.addingTimeInterval(10 * 60)
+)
+precondition(corrected.issueKey == "STK-2")
 let liveStore = ActivityStore(file: activityDirectory.appendingPathComponent("live.sqlite"))
 _ = try liveStore.recordClaudeHook(hook("UserPromptSubmit", session: "live", text: "LIVE-1"), now: activityDay)
 let live = try liveStore.activity(on: activityDay, now: activityDay.addingTimeInterval(4 * 60))
@@ -281,7 +294,10 @@ precondition(compactData.count < 4_000 && compactActivity.events.first?.text?.co
 
 let integration = ClaudeCodeIntegration(home: activityDirectory)
 let existingHooks: [String: Any] = ["hooks": [
-  "UserPromptSubmit": [["matcher": "", "hooks": [["type": "command", "command": "custom-hook"]]]],
+  "UserPromptSubmit": [["matcher": "", "hooks": [
+    ["type": "command", "command": "custom-hook"],
+    ["type": "command", "command": "old --ingest-claude-hook", "async": false],
+  ]]],
   "Stop": [["matcher": "", "hooks": [["type": "command", "command": "old --ingest-claude-hook"]]]],
 ]]
 let installedHooks = integration.hooksSettings(from: existingHooks, command: "new --ingest-claude-hook", enabled: true)
@@ -290,6 +306,11 @@ precondition(installedJSON.contains("custom-hook") && installedJSON.contains("ne
 precondition(!installedJSON.contains("MessageDisplay") && !installedJSON.contains("PostToolUse"))
 precondition(installedJSON.contains("mcp__this-is-logged__get_activity"))
 precondition(installedJSON.contains("mcp__this-is-logged__discard_event"))
+let installedHookGroups = (installedHooks["hooks"] as? [String: Any])?.values
+  .flatMap { $0 as? [[String: Any]] ?? [] } ?? []
+let managedHookCommands = installedHookGroups.flatMap { $0["hooks"] as? [[String: Any]] ?? [] }
+  .filter { ($0["command"] as? String)?.contains("--ingest-claude-hook") == true }
+precondition(!managedHookCommands.isEmpty && managedHookCommands.allSatisfy { $0["async"] as? Bool == true })
 let removedHooks = integration.hooksSettings(from: installedHooks, command: "", enabled: false)
 let removedJSON = String(data: try JSONSerialization.data(withJSONObject: removedHooks), encoding: .utf8)!
 precondition(removedJSON.contains("custom-hook") && !removedJSON.contains("--ingest-claude-hook"))

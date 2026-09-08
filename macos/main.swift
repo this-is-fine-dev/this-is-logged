@@ -1353,18 +1353,7 @@ if let notify = arguments.firstIndex(of: "--notify"), arguments.indices.contains
   exit(persistentNotificationsEnabled() ? 0 : 1)
 } else if arguments.contains("--ingest-claude-hook") {
   do {
-    let capture = try ActivityStore().recordClaudeHook(FileHandle.standardInput.readDataToEndOfFile())
-    if capture.eventName == "UserPromptSubmit" {
-      let issue = capture.issueKey.map { " Automatycznie rozpoznane zadanie: \($0)." } ?? ""
-      let catchAll = (try? SettingsStore().loadDraft().catchAllIssue) ?? "RPR-18"
-      let context = "This Is Logged zapisał wyłącznie bieżące polecenie jako \(capture.eventID).\(issue) Oceń tylko tę wiadomość, bez pobierania historii: przypisz ją przez suggest_attribution do wiarygodnego zadania Jiry, a zwykłą rozmowę lub pracę ogólną do \(catchAll). Użyj discard_event wyłącznie dla technicznego testu, pomyłki lub wiadomości bez związku z pracą; nie zgaduj innego zadania."
-      let response: [String: Any] = [
-        "hookSpecificOutput": ["hookEventName": "UserPromptSubmit", "additionalContext": context]
-      ]
-      let output = try JSONSerialization.data(withJSONObject: response)
-      FileHandle.standardOutput.write(output)
-      FileHandle.standardOutput.write(Data("\n".utf8))
-    }
+    try ActivityStore().recordClaudeHook(FileHandle.standardInput.readDataToEndOfFile())
     exit(0)
   } catch {
     fputs("this-is-logged hook: \(error.localizedDescription)\n", stderr)

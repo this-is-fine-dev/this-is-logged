@@ -91,10 +91,13 @@ public final class ActivityStore: @unchecked Sendable {
     let cwd = payload["cwd"] as? String ?? ""
     let text = (payload["prompt"] as? String).map { String($0.prefix(1_000)) }
     let branch = eventName == "UserPromptSubmit" ? Self.gitBranch(at: cwd) : nil
-    let issue = Self.issueKey(in: branch) ?? (eventName == "UserPromptSubmit" ? Self.issueKey(in: text) : nil)
+    var issue = Self.issueKey(in: branch) ?? (eventName == "UserPromptSubmit" ? Self.issueKey(in: text) : nil)
     let id = UUID().uuidString
 
     try withDatabase { database in
+      if eventName == "UserPromptSubmit", issue == nil {
+        issue = try lastIssue(in: database, sessionID: sessionID)
+      }
       let sql = """
         INSERT INTO activity_events
           (id, occurred_at, session_id, kind, cwd, branch, issue_key, text, payload)
@@ -117,6 +120,28 @@ public final class ActivityStore: @unchecked Sendable {
       }
     }
     return HookCapture(eventID: id, eventName: eventName, issueKey: issue)
+  }
+
+  private func lastIssue(in database: OpaquePointer, sessionID: String) throws -> String? {
+    let sql = """
+      SELECT issue_key FROM (
+        SELECT e.occurred_at,
+          COALESCE(
+            (SELECT a.issue_key FROM activity_attributions a WHERE a.event_id = e.id ORDER BY a.occurred_at DESC LIMIT 1),
+            e.issue_key
+          ) AS issue_key
+        FROM activity_events e
+        WHERE e.session_id = ? AND e.kind = 'UserPromptSubmit'
+      )
+      WHERE issue_key IS NOT NULL AND issue_key != ?
+      ORDER BY occurred_at DESC LIMIT 1
+      """
+    var statement: OpaquePointer?
+    guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else { throw databaseError(database) }
+    defer { sqlite3_finalize(statement) }
+    bind(sessionID, to: statement, at: 1)
+    bind(Self.discardedIssue, to: statement, at: 2)
+    return sqlite3_step(statement) == SQLITE_ROW ? string(statement, 0) : nil
   }
 
   public func discard(eventID: String) throws -> Bool {
@@ -322,6 +347,7 @@ public final class ActivityStore: @unchecked Sendable {
       message_key TEXT UNIQUE
     );
     CREATE INDEX IF NOT EXISTS activity_events_time ON activity_events(occurred_at);
+    CREATE INDEX IF NOT EXISTS activity_events_session_time ON activity_events(session_id, occurred_at DESC);
     CREATE TABLE IF NOT EXISTS activity_attributions (
       id TEXT PRIMARY KEY, event_id TEXT NOT NULL REFERENCES activity_events(id) ON DELETE CASCADE,
       occurred_at REAL NOT NULL, issue_key TEXT NOT NULL, summary TEXT NOT NULL, confidence REAL NOT NULL
@@ -404,7 +430,7 @@ public struct ClaudeMCPServer: Sendable {
           "protocolVersion": params?["protocolVersion"] as? String ?? "2024-11-05",
           "capabilities": ["tools": [:]],
           "serverInfo": ["name": "this-is-logged", "version": "1.0"],
-          "instructions": "Classify only the current event when the hook asks. Save confident Jira attribution, use the configured catch-all issue for general work, discard only technical noise, never fetch a whole day unless the user asks, and never write Jira worklogs.",
+          "instructions": "Use these tools only when the user explicitly asks to inspect or review captured activity. Suggestions stay local and never write Jira worklogs.",
         ]
       case "ping": result = [:]
       case "tools/list": result = ["tools": Self.tools]
@@ -587,7 +613,7 @@ public struct ClaudeCodeIntegration: Sendable {
       }
       let updated = enabled && ActivityStore.capturedEventNames.contains(event) ? cleaned + [[
         "matcher": "",
-        "hooks": [["type": "command", "command": command, "timeout": 10, "async": event != "UserPromptSubmit"]],
+        "hooks": [["type": "command", "command": command, "timeout": 10, "async": true]],
       ]] : cleaned
       if updated.isEmpty { hooks.removeValue(forKey: event) } else { hooks[event] = updated }
     }
