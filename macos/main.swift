@@ -227,20 +227,20 @@ private let weekendMessages = ["nadgodzinki?", "nie tyraj tyle", "jebać biedę?
 private let morningMessages = ["daj pospać", "Jira też śpi", "najpierw kawusia", "od ósmej, szefie"]
 
 private func weekendMessage(day: Int) -> String { weekendMessages[day % weekendMessages.count] }
-private func noDataMessage(day: Int, hour: Int, minute: Int = 0, second: Int = 0, missingDays: Int) -> String {
+private func noDataMessage(day: Int, hour: Int, missingDays: Int) -> String {
   if missingDays > 0 { return " braki: \(missingDays)" }
   if hour < 8 { return " \(morningMessages[day % morningMessages.count])" }
-  return String(format: " %02d:%02d:%02d", hour - 8, minute, second)
+  return " 0.00 h"
 }
 
-private func statusBarTitle(seconds: Int, weekendText: String?, missingDays: Int, day: Int, hour: Int, minute: Int = 0, second: Int = 0) -> String {
+private func statusBarTitle(seconds: Int, weekendText: String?, missingDays: Int, day: Int, hour: Int) -> String {
   if let weekendText { return missingDays == 0 ? " \(weekendText)" : " braki: \(missingDays)" }
-  if seconds == 0 { return noDataMessage(day: day, hour: hour, minute: minute, second: second, missingDays: missingDays) }
+  if seconds == 0 { return noDataMessage(day: day, hour: hour, missingDays: missingDays) }
   return " \(nativeHours(seconds)) h"
 }
 
 private func nextStatusRefresh(after date: Date) -> Date {
-  let interval = 10.0
+  let interval = 60.0
   return Date(timeIntervalSinceReferenceDate: (floor(date.timeIntervalSinceReferenceDate / interval) + 1) * interval)
 }
 
@@ -396,7 +396,7 @@ private func todayPeriod() -> String {
     installAgentsIfNeeded()
     refreshClaudeIntegrationIfNeeded()
     if arguments.contains("--show-panel") || !configurationComplete(readSettings()) { showSettings() }
-    let refreshTimer = Timer(fire: nextStatusRefresh(after: Date()), interval: 10, repeats: true) { [weak self] _ in
+    let refreshTimer = Timer(fire: nextStatusRefresh(after: Date()), interval: 60, repeats: true) { [weak self] _ in
       Task { @MainActor in self?.refresh() }
     }
     timer = refreshTimer
@@ -768,10 +768,8 @@ private func todayPeriod() -> String {
     let showTarget = status?.syncEnabled ?? configuredSyncEnabled
     let isWeekend = Calendar.current.isDateInWeekend(now)
     let currentDay = LocalDay(now)
-    let currentClock = Calendar.current.dateComponents([.hour, .minute, .second], from: now)
+    let currentClock = Calendar.current.dateComponents([.hour], from: now)
     let currentHour = currentClock.hour ?? 0
-    let currentMinute = currentClock.minute ?? 0
-    let currentSecond = currentClock.second ?? 0
     let today = currentToday(status, on: currentDay)
     let cachedDayIsClosed = status?.today.map { $0.to < currentDay.description } ?? false
     let weekendText = isWeekend ? weekendMessage(day: Calendar.current.component(.day, from: now)) : nil
@@ -811,9 +809,7 @@ private func todayPeriod() -> String {
         weekendText: weekendText,
         missingDays: missingDays,
         day: currentDay.day,
-        hour: currentHour,
-        minute: currentMinute,
-        second: currentSecond
+        hour: currentHour
       )
       if let week = completedWeek {
         renderPeriod(weekStatus, label: "Tydzień", value: week, expected: expected, showTarget: showTarget)
@@ -847,14 +843,14 @@ private func todayPeriod() -> String {
       } else {
         setWaiting(monthStatus, label: "Miesiąc")
       }
-      item.button?.title = noDataMessage(day: currentDay.day, hour: currentHour, minute: currentMinute, second: currentSecond, missingDays: missingDays)
+      item.button?.title = noDataMessage(day: currentDay.day, hour: currentHour, missingDays: missingDays)
     } else {
       todayStatus.title = "\(dayLabel(currentDay)) · czekam na dane"
       setDetails(todayStatus, ["Czekam na pierwszy odczyt z Jiry."])
       for (line, label) in [(yesterdayStatus, "Poprzedni dzień pracy"), (weekStatus, "Tydzień"), (monthStatus, "Miesiąc")] {
         setWaiting(line, label: label)
       }
-      item.button?.title = noDataMessage(day: currentDay.day, hour: currentHour, minute: currentMinute, second: currentSecond, missingDays: missingDays)
+      item.button?.title = noDataMessage(day: currentDay.day, hour: currentHour, missingDays: missingDays)
     }
     reminderSchedule.title = isWeekend ? "Przypomnienia wrócą w poniedziałek" : "Przypomnienie \(configuredReminderTime)"
     if configuredSyncEnabled {
@@ -1408,14 +1404,15 @@ if let notify = arguments.firstIndex(of: "--notify"), arguments.indices.contains
   precondition((0..<8).map(weekendMessage) == weekendMessages + weekendMessages, "weekend message rotation")
   precondition((0..<8).map { noDataMessage(day: $0, hour: 7, missingDays: 0) } == (morningMessages + morningMessages).map { " \($0)" }, "morning message rotation")
   precondition(noDataMessage(day: 7, hour: 7, missingDays: 0) == " od ósmej, szefie", "morning message before work")
-  precondition(noDataMessage(day: 7, hour: 8, minute: 12, second: 34, missingDays: 0) == " 00:12:34", "workday counter advances")
+  precondition(noDataMessage(day: 7, hour: 8, missingDays: 0) == " 0.00 h", "reported counter starts at zero")
   precondition(noDataMessage(day: 7, hour: 7, missingDays: 2) == " braki: 2", "missing reports stay visible before work")
   precondition(statusBarTitle(seconds: 0, weekendText: "nadgodzinki?", missingDays: 0, day: 7, hour: 7) == " nadgodzinki?", "weekend easter egg")
   precondition(statusBarTitle(seconds: 0, weekendText: "nadgodzinki?", missingDays: 2, day: 7, hour: 7) == " braki: 2", "weekend warning")
   precondition(statusBarTitle(seconds: 0, weekendText: nil, missingDays: 0, day: 7, hour: 7) == " od ósmej, szefie", "live zero before work")
-  precondition(statusBarTitle(seconds: 0, weekendText: nil, missingDays: 0, day: 7, hour: 8) == " 00:00:00", "workday counter starts at eight")
-  precondition(statusBarTitle(seconds: 900, weekendText: nil, missingDays: 0, day: 7, hour: 8, minute: 12, second: 34) == " 0.25 h", "reported time replaces workday counter")
+  precondition(statusBarTitle(seconds: 0, weekendText: nil, missingDays: 0, day: 7, hour: 8) == " 0.00 h", "reported counter starts at eight")
+  precondition(statusBarTitle(seconds: 900, weekendText: nil, missingDays: 0, day: 7, hour: 8) == " 0.25 h", "reported time replaces zero")
   precondition(nextStatusRefresh(after: Date(timeIntervalSinceReferenceDate: 119.5)).timeIntervalSinceReferenceDate == 120, "status refresh aligns to wall clock")
+  precondition(nextStatusRefresh(after: Date(timeIntervalSinceReferenceDate: 120.5)).timeIntervalSinceReferenceDate == 180, "status refresh runs once per minute")
   let closedDays = PeriodStatus(from: "2026-08-31", to: "2026-09-03", workingDays: 4, sourceSeconds: 115_200, targetSeconds: 115_200, missing: [], differences: [])
   let friday = PeriodStatus(from: "2026-09-04", to: "2026-09-04", workingDays: 1, sourceSeconds: 28_800, targetSeconds: 28_800, missing: [], differences: [])
   let completedWeek = completedPeriod(closedDays, including: friday, includeDay: true)

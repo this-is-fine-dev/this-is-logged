@@ -64,6 +64,8 @@ dysku jako kopia zapasowa.
 ## Menu macOS
 
 Nagłówek pokazuje przede wszystkim dzisiejszy raport, a niżej bilans bieżącego miesiąca.
+Przed 08:00 pasek pokazuje poranny tekst; od 08:00 wyświetla wyłącznie czas zaraportowany w Jirze,
+zaczynając od `0.00 h`.
 
 Menu zawiera:
 
