@@ -729,8 +729,16 @@ private func todayPeriod() -> String {
   private func settingsSidebarButton(title: String, symbol: String, tag: Int) -> NSButton {
     let button = NSButton(title: title, target: self, action: #selector(settingsPageClicked(_:)))
     button.tag = tag
-    button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)
+    if let symbolImage = NSImage(systemSymbolName: symbol, accessibilityDescription: title) {
+      let insetImage = NSImage(size: NSSize(width: symbolImage.size.width + 10, height: symbolImage.size.height), flipped: false) { rect in
+        symbolImage.draw(in: NSRect(x: 10, y: 0, width: symbolImage.size.width, height: rect.height))
+        return true
+      }
+      insetImage.isTemplate = true
+      button.image = insetImage
+    }
     button.imagePosition = NSControl.ImagePosition.imageLeading
+    button.imageHugsTitle = true
     button.alignment = NSTextAlignment.left
     button.isBordered = false
     button.wantsLayer = true
