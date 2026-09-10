@@ -330,9 +330,9 @@ private func todayPeriod() -> String {
   return formatter.string(from: Date())
 }
 
-@MainActor private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUserNotificationCenterDelegate {
-  private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-  private let updaterController = SPUStandardUpdaterController(
+@MainActor private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelegate, UNUserNotificationCenterDelegate {
+  private lazy var item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+  private lazy var updaterController = SPUStandardUpdaterController(
     startingUpdater: true,
     updaterDelegate: nil,
     userDriverDelegate: nil
@@ -354,22 +354,24 @@ private func todayPeriod() -> String {
   private let sourceURLField = NSTextField(frame: .zero)
   private let sourceEmailField = NSTextField(frame: .zero)
   private let sourceTokenField = NSSecureTextField(frame: .zero)
-  private let syncToggle = NSButton(checkboxWithTitle: "Synchronizuj raporty z drugą Jirą", target: nil, action: nil)
+  private let syncToggle = NSSwitch(frame: .zero)
   private let targetURLField = NSTextField(frame: .zero)
   private let targetEmailField = NSTextField(frame: .zero)
   private let targetTokenField = NSSecureTextField(frame: .zero)
   private let targetIssueField = NSTextField(frame: .zero)
-  private let commentKeysToggle = NSButton(checkboxWithTitle: "Dodawaj klucze zadań do komentarza", target: nil, action: nil)
+  private let commentKeysToggle = NSSwitch(frame: .zero)
   private let syncTimeField = NSTextField(frame: .zero)
   private let reminderTimeField = NSTextField(frame: .zero)
   private let workdayHoursField = NSTextField(frame: .zero)
-  private let claudeToggle = NSButton(checkboxWithTitle: "Zbieraj aktywność z Claude Code", target: nil, action: nil)
-  private let calendarToggle = NSButton(checkboxWithTitle: "Uwzględniaj spotkania z Kalendarza", target: nil, action: nil)
+  private let claudeToggle = NSSwitch(frame: .zero)
+  private let calendarToggle = NSSwitch(frame: .zero)
   private let calendarPopup = NSPopUpButton(frame: .zero, pullsDown: false)
   private let catchAllIssueField = NSTextField(frame: .zero)
   private let settingsFeedback = NSTextField(labelWithString: " ")
   private let settingsProgress = NSProgressIndicator(frame: .zero)
-  private var targetBox: NSBox!
+  private let settingsTabView = NSTabView(frame: .zero)
+  private var settingsSidebarButtons: [NSButton] = []
+  private var targetBox: NSView!
   private var saveButton: NSButton!
   private var panel: NSPanel!
   private var syncWindow: SyncWindowController?
@@ -385,6 +387,7 @@ private func todayPeriod() -> String {
   private var configuredCalendarEnabled = savedSetting("CALENDAR_ENABLED", fallback: "0") == "1"
 
   func applicationDidFinishLaunching(_ notification: Notification) {
+    _ = updaterController
     NSApp.mainMenu = makeMainMenu()
     let center = UNUserNotificationCenter.current()
     center.delegate = self
@@ -519,8 +522,8 @@ private func todayPeriod() -> String {
 
   private func setupSettingsPanel() {
     panel = NSPanel(
-      contentRect: NSRect(x: 0, y: 0, width: 590, height: 850),
-      styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
+      contentRect: NSRect(x: 0, y: 0, width: 780, height: 610),
+      styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
       backing: .buffered,
       defer: false
     )
@@ -531,47 +534,98 @@ private func todayPeriod() -> String {
     panel.titlebarAppearsTransparent = true
     panel.isReleasedWhenClosed = false
     panel.hidesOnDeactivate = false
+    panel.delegate = self
+    panel.minSize = NSSize(width: 720, height: 560)
     panel.center()
 
-    let root = NSStackView()
-    root.orientation = .vertical
-    root.alignment = .leading
-    root.spacing = 12
-    root.translatesAutoresizingMaskIntoConstraints = false
-    panel.contentView?.addSubview(root)
-    NSLayoutConstraint.activate([
-      root.leadingAnchor.constraint(equalTo: panel.contentView!.leadingAnchor, constant: 22),
-      root.trailingAnchor.constraint(equalTo: panel.contentView!.trailingAnchor, constant: -22),
-      root.topAnchor.constraint(equalTo: panel.contentView!.safeAreaLayoutGuide.topAnchor, constant: 18),
-      root.bottomAnchor.constraint(lessThanOrEqualTo: panel.contentView!.bottomAnchor, constant: -18),
-    ])
+    guard let content = panel.contentView else { return }
+    let sidebar = NSVisualEffectView()
+    sidebar.material = .sidebar
+    sidebar.blendingMode = .withinWindow
+    sidebar.state = .active
+    sidebar.translatesAutoresizingMaskIntoConstraints = false
+    content.addSubview(sidebar)
 
-    let header = NSStackView()
-    header.orientation = .horizontal
-    header.alignment = .centerY
-    header.spacing = 10
+    let brand = NSStackView()
+    brand.orientation = .vertical
+    brand.alignment = .leading
+    brand.spacing = 7
     if let iconURL, let image = NSImage(contentsOf: iconURL) {
       let icon = NSImageView(image: image)
       icon.imageScaling = .scaleProportionallyUpOrDown
-      icon.widthAnchor.constraint(equalToConstant: 38).isActive = true
-      icon.heightAnchor.constraint(equalToConstant: 38).isActive = true
-      header.addArrangedSubview(icon)
+      icon.widthAnchor.constraint(equalToConstant: 58).isActive = true
+      icon.heightAnchor.constraint(equalToConstant: 58).isActive = true
+      brand.addArrangedSubview(icon)
     }
-    let heading = NSStackView()
-    heading.orientation = .vertical
-    heading.alignment = .leading
-    heading.spacing = 1
-    let title = NSTextField(labelWithString: "Konfiguracja")
-    title.font = .systemFont(ofSize: 17, weight: .semibold)
-    let subtitle = NSTextField(labelWithString: "Monitoring jest zawsze aktywny. Druga Jira jest opcjonalna.")
-    subtitle.textColor = .secondaryLabelColor
-    heading.addArrangedSubview(title)
-    heading.addArrangedSubview(subtitle)
-    header.addArrangedSubview(heading)
-    root.addArrangedSubview(header)
+    let appName = NSTextField(labelWithString: "This Is Logged")
+    appName.font = .systemFont(ofSize: 15, weight: .semibold)
+    brand.addArrangedSubview(appName)
+
+    let sidebarStack = NSStackView()
+    sidebarStack.orientation = .vertical
+    sidebarStack.alignment = .leading
+    sidebarStack.spacing = 5
+    sidebarStack.translatesAutoresizingMaskIntoConstraints = false
+    sidebarStack.addArrangedSubview(brand)
+    sidebarStack.setCustomSpacing(22, after: brand)
+    for (index, item) in [
+      ("Jira główna", "link"),
+      ("Synchronizacja", "arrow.triangle.2.circlepath"),
+      ("Monitoring", "clock"),
+      ("Analiza czasu", "chart.bar.xaxis"),
+      ("O aplikacji", "info.circle"),
+    ].enumerated() {
+      let button = settingsSidebarButton(title: item.0, symbol: item.1, tag: index)
+      settingsSidebarButtons.append(button)
+      sidebarStack.addArrangedSubview(button)
+    }
+    sidebar.addSubview(sidebarStack)
+
+    let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"
+    let versionLabel = NSTextField(labelWithString: "This Is Logged · v\(version)")
+    versionLabel.font = .systemFont(ofSize: 10)
+    versionLabel.textColor = .tertiaryLabelColor
+    versionLabel.translatesAutoresizingMaskIntoConstraints = false
+    sidebar.addSubview(versionLabel)
+
+    settingsTabView.tabViewType = .noTabsNoBorder
+    settingsTabView.translatesAutoresizingMaskIntoConstraints = false
+    content.addSubview(settingsTabView)
+
+    let footerSeparator = NSBox()
+    footerSeparator.boxType = .separator
+    footerSeparator.translatesAutoresizingMaskIntoConstraints = false
+    content.addSubview(footerSeparator)
+
+    let footer = NSView()
+    footer.translatesAutoresizingMaskIntoConstraints = false
+    content.addSubview(footer)
+
+    NSLayoutConstraint.activate([
+      sidebar.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+      sidebar.topAnchor.constraint(equalTo: content.topAnchor),
+      sidebar.bottomAnchor.constraint(equalTo: content.bottomAnchor),
+      sidebar.widthAnchor.constraint(equalToConstant: 180),
+      sidebarStack.leadingAnchor.constraint(equalTo: sidebar.leadingAnchor, constant: 14),
+      sidebarStack.trailingAnchor.constraint(equalTo: sidebar.trailingAnchor, constant: -14),
+      sidebarStack.topAnchor.constraint(equalTo: content.safeAreaLayoutGuide.topAnchor, constant: 16),
+      versionLabel.leadingAnchor.constraint(equalTo: sidebar.leadingAnchor, constant: 18),
+      versionLabel.bottomAnchor.constraint(equalTo: sidebar.bottomAnchor, constant: -15),
+      settingsTabView.leadingAnchor.constraint(equalTo: sidebar.trailingAnchor, constant: 16),
+      settingsTabView.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -16),
+      settingsTabView.topAnchor.constraint(equalTo: content.safeAreaLayoutGuide.topAnchor, constant: 8),
+      settingsTabView.bottomAnchor.constraint(equalTo: footerSeparator.topAnchor, constant: -8),
+      footerSeparator.leadingAnchor.constraint(equalTo: sidebar.trailingAnchor),
+      footerSeparator.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+      footerSeparator.bottomAnchor.constraint(equalTo: footer.topAnchor),
+      footer.leadingAnchor.constraint(equalTo: sidebar.trailingAnchor),
+      footer.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+      footer.bottomAnchor.constraint(equalTo: content.bottomAnchor),
+      footer.heightAnchor.constraint(equalToConstant: 58),
+    ])
 
     for field in [sourceURLField, sourceEmailField, sourceTokenField, targetURLField, targetEmailField, targetTokenField, targetIssueField, catchAllIssueField] {
-      field.widthAnchor.constraint(equalToConstant: 365).isActive = true
+      field.widthAnchor.constraint(equalToConstant: 300).isActive = true
     }
     for field in [sourceURLField, sourceEmailField, sourceTokenField, targetURLField, targetEmailField, targetTokenField,
                   targetIssueField, syncTimeField, reminderTimeField, workdayHoursField, catchAllIssueField] {
@@ -585,20 +639,14 @@ private func todayPeriod() -> String {
     targetTokenField.placeholderString = "API token lub Personal Access Token"
     targetIssueField.placeholderString = "AUT-123"
     catchAllIssueField.placeholderString = "RPR-18"
-    root.addArrangedSubview(settingsBox("Jira główna", [
-      ("URL", sourceURLField), ("Email", sourceEmailField), ("Token", sourceTokenField),
-    ]))
-
     syncToggle.target = self
     syncToggle.action = #selector(toggleSynchronization)
-    root.addArrangedSubview(syncToggle)
     syncTimeField.alignment = .center
     syncTimeField.widthAnchor.constraint(equalToConstant: 90).isActive = true
-    targetBox = settingsBox("Jira docelowa", [
+    targetBox = settingsSection("JIRA DOCELOWA", [
       ("URL", targetURLField), ("Email", targetEmailField), ("Token", targetTokenField),
-      ("Zadanie", targetIssueField), ("Automatyczny zapis", syncTimeField), ("", commentKeysToggle),
+      ("Zadanie", targetIssueField), ("Automatyczny zapis", syncTimeField), ("Klucze w komentarzu", commentKeysToggle),
     ])
-    root.addArrangedSubview(targetBox)
 
     for field in [reminderTimeField, workdayHoursField] {
       field.alignment = .center
@@ -607,63 +655,185 @@ private func todayPeriod() -> String {
     let hoursControl = NSStackView(views: [workdayHoursField, NSTextField(labelWithString: "h")])
     hoursControl.orientation = .horizontal
     hoursControl.spacing = 6
-    root.addArrangedSubview(settingsBox("Monitoring", [
-      ("Przypomnienie", reminderTimeField), ("Pełny dzień", hoursControl),
-    ]))
-
     let claudeDescription = NSTextField(labelWithString: "Spotkania i rozmowy bez własnego zadania trafiają do zadania zbiorczego.")
     claudeDescription.textColor = .secondaryLabelColor
     claudeDescription.lineBreakMode = .byWordWrapping
     claudeDescription.maximumNumberOfLines = 2
-    claudeDescription.widthAnchor.constraint(equalToConstant: 365).isActive = true
+    claudeDescription.widthAnchor.constraint(equalToConstant: 300).isActive = true
     calendarToggle.target = self
     calendarToggle.action = #selector(toggleCalendar)
-    calendarPopup.widthAnchor.constraint(equalToConstant: 365).isActive = true
-    root.addArrangedSubview(settingsBox("Analiza czasu", [
-      ("", claudeToggle), ("", calendarToggle), ("Konto", calendarPopup),
-      ("Zadanie zbiorcze", catchAllIssueField), ("", claudeDescription),
-    ]))
+    calendarPopup.widthAnchor.constraint(equalToConstant: 300).isActive = true
+
+    addSettingsPage(title: "Jira główna", views: [
+      settingsSection("POŁĄCZENIE", [
+        ("Adres", sourceURLField), ("Email", sourceEmailField), ("Token API", sourceTokenField),
+      ]),
+      settingsNote("To jest główne źródło raportów. Monitoring działa niezależnie od opcjonalnej synchronizacji."),
+    ])
+    addSettingsPage(title: "Synchronizacja", views: [
+      settingsSection("SYNCHRONIZACJA", [("Kopiuj do drugiej Jiry", syncToggle)]),
+      targetBox,
+    ])
+    addSettingsPage(title: "Monitoring", views: [
+      settingsSection("HARMONOGRAM", [
+        ("Przypomnienie", reminderTimeField), ("Pełny dzień", hoursControl),
+      ]),
+      settingsNote("Dane z Jiry są sprawdzane co minutę. Przypomnienie obejmuje także wcześniejsze braki w miesiącu."),
+    ])
+    addSettingsPage(title: "Analiza czasu", views: [
+      settingsSection("CLAUDE CODE", [("Zbieraj aktywność", claudeToggle)]),
+      settingsSection("KALENDARZ", [
+        ("Uwzględniaj spotkania", calendarToggle), ("Konto", calendarPopup),
+      ]),
+      settingsSection("PRZYPISANIE", [
+        ("Zadanie zbiorcze", catchAllIssueField), ("Zasada", claudeDescription),
+      ]),
+    ])
+
+    let aboutVersion = NSTextField(labelWithString: version)
+    aboutVersion.font = .monospacedDigitSystemFont(ofSize: 13, weight: .medium)
+    let updateButton = NSButton(title: "Sprawdź aktualizacje…", target: self, action: #selector(checkForUpdates(_:)))
+    addSettingsPage(title: "O aplikacji", views: [
+      settingsSection("THIS IS LOGGED", [("Wersja", aboutVersion), ("Aktualizacje", updateButton)]),
+      settingsNote("Your worklogs are fine. Probably."),
+    ])
 
     settingsFeedback.textColor = .secondaryLabelColor
     settingsFeedback.lineBreakMode = .byWordWrapping
     settingsFeedback.maximumNumberOfLines = 2
-    root.addArrangedSubview(settingsFeedback)
     settingsProgress.style = .spinning
     settingsProgress.controlSize = .small
     settingsProgress.isDisplayedWhenStopped = false
     saveButton = NSButton(title: "Sprawdź i zapisz", target: self, action: #selector(saveSettings))
     saveButton.keyEquivalent = "\r"
-    let footer = NSStackView(views: [settingsProgress, NSView(), saveButton])
-    footer.orientation = .horizontal
-    root.addArrangedSubview(footer)
-    footer.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true
+    let footerContent = NSStackView(views: [settingsProgress, settingsFeedback, NSView(), saveButton])
+    footerContent.orientation = .horizontal
+    footerContent.alignment = .centerY
+    footerContent.spacing = 8
+    footerContent.translatesAutoresizingMaskIntoConstraints = false
+    footer.addSubview(footerContent)
+    NSLayoutConstraint.activate([
+      footerContent.leadingAnchor.constraint(equalTo: footer.leadingAnchor, constant: 18),
+      footerContent.trailingAnchor.constraint(equalTo: footer.trailingAnchor, constant: -18),
+      footerContent.centerYAnchor.constraint(equalTo: footer.centerYAnchor),
+      settingsFeedback.widthAnchor.constraint(lessThanOrEqualToConstant: 330),
+    ])
     syncToggle.state = configuredSyncEnabled ? .on : .off
     claudeToggle.state = configuredClaudeEnabled ? .on : .off
     calendarToggle.state = configuredCalendarEnabled ? .on : .off
     populateCalendarSources(selected: savedSetting("CALENDAR_ID", fallback: ""))
     toggleSynchronization()
+    activateSettingsPage(0)
   }
 
-  private func settingsBox(_ title: String, _ rows: [(String, NSView)]) -> NSBox {
-    let box = NSBox()
-    box.title = title
-    box.titlePosition = .atTop
-    box.boxType = .primary
-    let grid = NSGridView(views: rows.map { [NSTextField(labelWithString: $0.0), $0.1] })
-    grid.column(at: 0).xPlacement = .trailing
-    grid.column(at: 1).xPlacement = .leading
-    grid.rowSpacing = 8
-    grid.columnSpacing = 12
-    grid.translatesAutoresizingMaskIntoConstraints = false
-    box.contentView?.addSubview(grid)
+  private func settingsSidebarButton(title: String, symbol: String, tag: Int) -> NSButton {
+    let button = NSButton(title: title, target: self, action: #selector(settingsPageClicked(_:)))
+    button.tag = tag
+    button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)
+    button.imagePosition = NSControl.ImagePosition.imageLeading
+    button.alignment = NSTextAlignment.left
+    button.isBordered = false
+    button.wantsLayer = true
+    button.layer?.cornerRadius = 8
+    button.heightAnchor.constraint(equalToConstant: 38).isActive = true
+    button.widthAnchor.constraint(equalToConstant: 152).isActive = true
+    return button
+  }
+
+  @objc private func settingsPageClicked(_ sender: NSButton) { activateSettingsPage(sender.tag) }
+
+  private func activateSettingsPage(_ index: Int) {
+    settingsTabView.selectTabViewItem(at: index)
+    for button in settingsSidebarButtons {
+      let selected = button.tag == index
+      button.layer?.backgroundColor = selected ? NSColor.controlAccentColor.cgColor : NSColor.clear.cgColor
+      button.contentTintColor = selected ? .white : .labelColor
+      button.attributedTitle = NSAttributedString(string: button.title, attributes: [
+        .font: NSFont.systemFont(ofSize: 13, weight: selected ? .semibold : .regular),
+        .foregroundColor: selected ? NSColor.white : NSColor.labelColor,
+      ])
+    }
+  }
+
+  private func addSettingsPage(title: String, views: [NSView]) {
+    let page = NSView()
+    let stack = NSStackView(views: views)
+    stack.orientation = .vertical
+    stack.alignment = .leading
+    stack.spacing = 16
+    stack.translatesAutoresizingMaskIntoConstraints = false
+    page.addSubview(stack)
     NSLayoutConstraint.activate([
-      grid.leadingAnchor.constraint(equalTo: box.contentView!.leadingAnchor, constant: 12),
-      grid.trailingAnchor.constraint(equalTo: box.contentView!.trailingAnchor, constant: -12),
-      grid.topAnchor.constraint(equalTo: box.contentView!.topAnchor, constant: 8),
-      grid.bottomAnchor.constraint(equalTo: box.contentView!.bottomAnchor, constant: -10),
+      stack.leadingAnchor.constraint(equalTo: page.leadingAnchor, constant: 10),
+      stack.trailingAnchor.constraint(equalTo: page.trailingAnchor, constant: -10),
+      stack.topAnchor.constraint(equalTo: page.topAnchor, constant: 16),
     ])
-    box.widthAnchor.constraint(equalToConstant: 546).isActive = true
-    return box
+    for view in views { view.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true }
+    let item = NSTabViewItem(identifier: title)
+    item.label = title
+    item.view = page
+    settingsTabView.addTabViewItem(item)
+  }
+
+  private func settingsSection(_ title: String, _ rows: [(String, NSView)]) -> NSView {
+    let section = NSStackView()
+    section.orientation = .vertical
+    section.alignment = .leading
+    section.spacing = 7
+    let heading = NSTextField(labelWithString: title)
+    heading.font = .systemFont(ofSize: 10, weight: .medium)
+    heading.textColor = .secondaryLabelColor
+    section.addArrangedSubview(heading)
+
+    let box = NSBox()
+    box.boxType = .custom
+    box.titlePosition = .noTitle
+    box.borderColor = .separatorColor
+    box.borderWidth = 1
+    box.cornerRadius = 9
+    box.fillColor = NSColor.controlBackgroundColor.withAlphaComponent(0.35)
+    box.contentViewMargins = .zero
+    let list = NSStackView()
+    list.orientation = .vertical
+    list.alignment = .leading
+    list.spacing = 0
+    list.translatesAutoresizingMaskIntoConstraints = false
+    box.contentView?.addSubview(list)
+    NSLayoutConstraint.activate([
+      list.leadingAnchor.constraint(equalTo: box.contentView!.leadingAnchor),
+      list.trailingAnchor.constraint(equalTo: box.contentView!.trailingAnchor),
+      list.topAnchor.constraint(equalTo: box.contentView!.topAnchor),
+      list.bottomAnchor.constraint(equalTo: box.contentView!.bottomAnchor),
+    ])
+    for (index, entry) in rows.enumerated() {
+      let label = NSTextField(labelWithString: entry.0)
+      label.font = .systemFont(ofSize: 13)
+      let row = NSStackView(views: [label, NSView(), entry.1])
+      row.orientation = .horizontal
+      row.alignment = .centerY
+      row.spacing = 10
+      row.edgeInsets = NSEdgeInsets(top: 7, left: 14, bottom: 7, right: 14)
+      row.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
+      list.addArrangedSubview(row)
+      row.widthAnchor.constraint(equalTo: list.widthAnchor).isActive = true
+      if index < rows.count - 1 {
+        let separator = NSBox()
+        separator.boxType = .separator
+        list.addArrangedSubview(separator)
+        separator.widthAnchor.constraint(equalTo: list.widthAnchor).isActive = true
+      }
+    }
+    section.addArrangedSubview(box)
+    box.widthAnchor.constraint(equalTo: section.widthAnchor).isActive = true
+    return section
+  }
+
+  private func settingsNote(_ text: String) -> NSView {
+    let note = NSTextField(wrappingLabelWithString: text)
+    note.font = .systemFont(ofSize: 12)
+    note.textColor = .secondaryLabelColor
+    note.maximumNumberOfLines = 3
+    return note
   }
 
   @objc private func toggleSynchronization() {
@@ -1002,6 +1172,7 @@ private func todayPeriod() -> String {
   }
 
   @objc private func showSettings() {
+    NSApp.setActivationPolicy(.regular)
     if panel.isVisible {
       NSApplication.shared.activate(ignoringOtherApps: true)
       panel.makeKeyAndOrderFront(nil)
@@ -1029,6 +1200,10 @@ private func todayPeriod() -> String {
     settingsFeedback.stringValue = configurationComplete(values) ? "Zmiany zostaną sprawdzone w Jirze przed zapisem." : "Uzupełnij Jirę główną, aby uruchomić monitoring."
     NSApplication.shared.activate(ignoringOtherApps: true)
     panel.makeKeyAndOrderFront(nil)
+  }
+
+  nonisolated func windowWillClose(_ notification: Notification) {
+    Task { @MainActor in NSApp.setActivationPolicy(.accessory) }
   }
 
   nonisolated func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -1256,28 +1431,27 @@ private func todayPeriod() -> String {
   func layoutSelfcheck(syncEnabled: Bool) {
     configuredSyncEnabled = syncEnabled
     configuredCalendarEnabled = true
-    setupMenu()
     setupSettingsPanel()
-    let header = item.menu?.items.first?.view
-    header?.layoutSubtreeIfNeeded()
-    panel.contentView?.layoutSubtreeIfNeeded()
     let bounds = panel.contentView!.bounds
-    let sourceFrame = panel.contentView!.convert(sourceURLField.bounds, from: sourceURLField)
-    let syncFrame = panel.contentView!.convert(syncTimeField.bounds, from: syncTimeField)
-    let calendarFrame = panel.contentView!.convert(calendarPopup.bounds, from: calendarPopup)
-    let catchAllFrame = panel.contentView!.convert(catchAllIssueField.bounds, from: catchAllIssueField)
+    func visible(_ view: NSView, on page: Int) -> Bool {
+      activateSettingsPage(page)
+      panel.contentView?.layoutSubtreeIfNeeded()
+      let frame = panel.contentView!.convert(view.bounds, from: view)
+      return bounds.contains(frame) && frame.height > 0 && !view.isHiddenOrHasHiddenAncestor
+    }
+    let sourceVisible = visible(sourceURLField, on: 0)
+    let syncVisible = !syncEnabled || visible(syncTimeField, on: 1)
+    let targetVisibilityIsCorrect = targetBox.isHidden == !syncEnabled
+    let monitoringVisible = visible(reminderTimeField, on: 2) && visible(workdayHoursField, on: 2)
+    let analysisVisible = visible(calendarPopup, on: 3) && visible(catchAllIssueField, on: 3)
+    activateSettingsPage(0)
+    panel.contentView?.layoutSubtreeIfNeeded()
     let saveFrame = panel.contentView!.convert(saveButton.bounds, from: saveButton)
     precondition(
-      item.menu?.minimumWidth == 410 && item.menu?.autoenablesItems == true && header?.frame.height == 96 &&
-        headerMonthValue.frame.height > 0 && headerTodayValue.frame.height > 0 &&
-        item.menu?.items.contains(where: { $0.attributedTitle?.string == "RAPORTY" }) == true &&
-        item.menu?.items.contains(where: { $0.attributedTitle?.string == "SYNCHRONIZACJA" }) == syncEnabled &&
-        item.menu?.items.contains(where: { $0.title == "Analiza czasu…" }) == true &&
-        bounds.contains(sourceFrame) && sourceFrame.height > 0 &&
-        (!syncEnabled || bounds.contains(syncFrame) && syncFrame.height > 0) &&
-        bounds.contains(calendarFrame) && calendarFrame.height > 0 &&
-        bounds.contains(catchAllFrame) && catchAllFrame.height > 0 &&
-        bounds.contains(saveFrame) && saveFrame.height > 0 && !panel.hidesOnDeactivate,
+      settingsTabView.numberOfTabViewItems == 5 && settingsSidebarButtons.count == 5 &&
+        settingsSidebarButtons.allSatisfy { $0.frame.width > 0 && (38...39).contains($0.frame.height) } &&
+        sourceVisible && syncVisible && targetVisibilityIsCorrect && monitoringVisible && analysisVisible &&
+        bounds.contains(saveFrame) && saveFrame.height > 0 && !panel.hidesOnDeactivate && panel.delegate === self,
       "Opcje są poza widocznym obszarem"
     )
     print("ok")

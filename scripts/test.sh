@@ -83,10 +83,20 @@ if ! rg -Uq 'private func presentUpdater\(_ sender: Any\?\) \{\n    NSApplicatio
   exit 1
 fi
 
+if ! rg -Uq '@objc private func showSettings\(\) \{\n    NSApp\.setActivationPolicy\(\.regular\)' "$PROJECT_ROOT/macos/main.swift" ||
+   ! rg -Uq 'func windowWillClose\([^}]+NSApp\.setActivationPolicy\(\.accessory\)' "$PROJECT_ROOT/macos/main.swift"; then
+  echo "settings window does not expose and dismiss the Dock icon" >&2
+  exit 1
+fi
+
 env SDKROOT="$SDK_PATH" SWIFTPM_MODULECACHE_OVERRIDE="$MODULE_CACHE" CLANG_MODULE_CACHE_PATH="$MODULE_CACHE" \
   swift run --disable-sandbox --disable-keychain --package-path "$PROJECT_ROOT" ThisIsLoggedSelfcheck
 env SDKROOT="$SDK_PATH" SWIFTPM_MODULECACHE_OVERRIDE="$MODULE_CACHE" CLANG_MODULE_CACHE_PATH="$MODULE_CACHE" \
   swift run --disable-sandbox --disable-keychain --package-path "$PROJECT_ROOT" ThisIsLogged --selfcheck
+env SDKROOT="$SDK_PATH" SWIFTPM_MODULECACHE_OVERRIDE="$MODULE_CACHE" CLANG_MODULE_CACHE_PATH="$MODULE_CACHE" \
+  swift run --disable-sandbox --disable-keychain --package-path "$PROJECT_ROOT" ThisIsLogged --layout-selfcheck
+env SDKROOT="$SDK_PATH" SWIFTPM_MODULECACHE_OVERRIDE="$MODULE_CACHE" CLANG_MODULE_CACHE_PATH="$MODULE_CACHE" \
+  swift run --disable-sandbox --disable-keychain --package-path "$PROJECT_ROOT" ThisIsLogged --layout-selfcheck-monitoring
 env SDKROOT="$SDK_PATH" SWIFTPM_MODULECACHE_OVERRIDE="$MODULE_CACHE" CLANG_MODULE_CACHE_PATH="$MODULE_CACHE" \
   swift run --disable-sandbox --disable-keychain --package-path "$PROJECT_ROOT" ThisIsLogged --sync-layout-selfcheck
 env SDKROOT="$SDK_PATH" SWIFTPM_MODULECACHE_OVERRIDE="$MODULE_CACHE" CLANG_MODULE_CACHE_PATH="$MODULE_CACHE" \

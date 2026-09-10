@@ -29,8 +29,9 @@ Awaria albo wyłączenie synchronizacji nie blokuje odczytu raportów z Jiry gł
 - Jira Cloud oraz Jira Server/Data Center;
 - opcjonalne porównanie i synchronizacja z drugą Jirą;
 - natywne okno rozwiązywania różnic bez Terminala;
-- cała konfiguracja dostępna w natywnym oknie aplikacji.
-- automatyczne aktualizacje przez Sparkle i GitHub Releases.
+- cała konfiguracja dostępna w natywnym oknie z boczną nawigacją i uporządkowanymi sekcjami;
+- ikona w Docku widoczna podczas pracy w ustawieniach i automatycznie ukrywana po zamknięciu okna;
+- automatyczne aktualizacje przez Sparkle i GitHub Releases;
 - opcjonalne zbieranie aktywności Claude Code ze wszystkich worktree i inteligentna propozycja worklogów.
 - opcjonalne uwzględnianie spotkań z lokalnego Kalendarza macOS.
 
