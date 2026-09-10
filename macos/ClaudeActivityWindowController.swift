@@ -1,9 +1,9 @@
 import AppKit
 import ThisIsLoggedCore
 
-@MainActor final class ClaudeActivityWindowController: NSWindowController {
+@MainActor final class ClaudeActivityViewController: NSViewController {
   private let store = ActivityStore()
-  private let settings: AppSettings
+  private var settings: AppSettings?
   private let datePicker = NSDatePicker()
   private let dayTitle = NSTextField(labelWithString: "")
   private let dayTotal = NSTextField(labelWithString: "")
@@ -16,40 +16,23 @@ import ThisIsLoggedCore
   private var issueTitles: [String: String] = [:]
   private var loadingTitles: Set<String> = []
 
-  init(settings: AppSettings) {
+  init(settings: AppSettings?) {
     self.settings = settings
-    let panel = NSPanel(
-      contentRect: NSRect(x: 0, y: 0, width: 760, height: 640),
-      styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
-      backing: .buffered,
-      defer: false
-    )
-    panel.title = "Analiza czasu"
-    panel.toolbarStyle = .unifiedCompact
-    panel.toolbar = NSToolbar(identifier: "claude-activity")
-    panel.titleVisibility = .hidden
-    panel.titlebarAppearsTransparent = true
-    panel.collectionBehavior.insert(.moveToActiveSpace)
-    panel.isReleasedWhenClosed = false
-    panel.hidesOnDeactivate = false
-    panel.minSize = NSSize(width: 700, height: 560)
-    super.init(window: panel)
-    buildUI()
+    super.init(nibName: nil, bundle: nil)
   }
 
   required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-  override func showWindow(_ sender: Any?) {
-    super.showWindow(sender)
-    window?.center()
-    NSApplication.shared.activate(ignoringOtherApps: true)
-    window?.makeKeyAndOrderFront(sender)
-    window?.orderFrontRegardless()
-    reload()
+  override func loadView() {
+    view = NSView(frame: NSRect(x: 0, y: 0, width: 540, height: 500))
+    buildUI()
   }
 
+  func updateSettings(_ settings: AppSettings) { self.settings = settings }
+  func refresh() { reload() }
+
   private func buildUI() {
-    guard let content = window?.contentView else { return }
+    let content = view
     let root = NSStackView()
     root.orientation = .vertical
     root.alignment = .leading
@@ -57,10 +40,10 @@ import ThisIsLoggedCore
     root.translatesAutoresizingMaskIntoConstraints = false
     content.addSubview(root)
     NSLayoutConstraint.activate([
-      root.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 22),
-      root.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -22),
-      root.topAnchor.constraint(equalTo: content.safeAreaLayoutGuide.topAnchor, constant: 18),
-      root.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -18),
+      root.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 10),
+      root.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -10),
+      root.topAnchor.constraint(equalTo: content.topAnchor, constant: 16),
+      root.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -10),
     ])
 
     let previous = NSButton(title: "‹", target: self, action: #selector(changeDay(_:)))
@@ -99,12 +82,12 @@ import ThisIsLoggedCore
     rows.orientation = .vertical
     rows.alignment = .leading
     rows.spacing = 8
-    rows.frame = NSRect(x: 0, y: 0, width: 700, height: 1)
+    rows.frame = NSRect(x: 0, y: 0, width: 526, height: 1)
     rows.autoresizingMask = [.width]
     scroll.documentView = rows
     root.addArrangedSubview(scroll)
     scroll.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true
-    scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 340).isActive = true
+    scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 260).isActive = true
 
     safety.font = .systemFont(ofSize: 12, weight: .medium)
     safety.textColor = .systemGreen
@@ -112,11 +95,14 @@ import ThisIsLoggedCore
   }
 
   @objc private func reload() {
+    guard let settings else {
+      renderUnavailable()
+      return
+    }
     let date = datePicker.dateValue
     let now = Date()
-    let target = targetMinutes(for: date, now: now)
+    let target = targetMinutes(for: date, now: now, workdayHours: settings.workdayHours)
     let range = CalendarIntegration.workRange(on: date, now: now, workdayHours: settings.workdayHours)
-    let settings = settings
     let store = store
     Task.detached {
       var meetings: [CalendarMeeting] = []
@@ -171,6 +157,7 @@ import ThisIsLoggedCore
     jiraWarning: String? = nil,
     fetchTitles: Bool = true
   ) {
+    guard let settings else { return }
     rows.arrangedSubviews.forEach { rows.removeArrangedSubview($0); $0.removeFromSuperview() }
     allocationRows.removeAll()
     issueFields.removeAll()
@@ -179,7 +166,7 @@ import ThisIsLoggedCore
     rows.addArrangedSubview(row([
       label("Zadanie", header: true), label("Czas", header: true),
       label("Podstawa", header: true), label("Zakres sygnałów", header: true),
-    ], widths: [330, 70, 90, 160]))
+    ], widths: [230, 55, 90, 115]))
     for allocation in activity.allocations {
       let meetingCount = allocation.issueKey == settings.catchAllIssue ? meetings.count : 0
       let promptCount = max(0, allocation.evidence - meetingCount)
@@ -195,7 +182,7 @@ import ThisIsLoggedCore
         task, label(Self.duration(allocation.minutes)),
         label(evidence.isEmpty ? "bez wskazań" : evidence),
         label(signalRange(for: allocation.issueKey, events: activity.events, meetings: meetings)),
-      ], widths: [330, 70, 90, 160], alignment: .top)
+      ], widths: [230, 55, 90, 115], alignment: .top)
       allocationRows.append(item)
       rows.addArrangedSubview(item)
     }
@@ -209,31 +196,31 @@ import ThisIsLoggedCore
       rows.addArrangedSubview(section("SPOTKANIA Z KALENDARZA · \(meetings.count)"))
       rows.addArrangedSubview(row([
         label("Spotkanie", header: true), label("Czas", header: true), label("Godziny", header: true),
-      ], widths: [470, 70, 120]))
+      ], widths: [320, 60, 110]))
       for meeting in meetings {
         rows.addArrangedSubview(row([
           wrappingLabel(meeting.title),
           label(Self.duration(Int((meeting.end.timeIntervalSince(meeting.start) / 60).rounded()))),
           label("\(Self.timeFormatter.string(from: meeting.start))–\(Self.timeFormatter.string(from: meeting.end))"),
-        ], widths: [470, 70, 120], alignment: .top))
+        ], widths: [320, 60, 110], alignment: .top))
       }
     }
 
     let separator = NSBox()
     separator.boxType = .separator
-    separator.widthAnchor.constraint(equalToConstant: 686).isActive = true
+    separator.widthAnchor.constraint(equalToConstant: 526).isActive = true
     rows.addArrangedSubview(separator)
     let displayedEvents = activity.events.suffix(50)
     rows.addArrangedSubview(section("OSTATNIE ISTOTNE ZDARZENIA · \(displayedEvents.count) Z \(activity.events.count)"))
     rows.addArrangedSubview(row([
       label("Czas", header: true), label("Akcja", header: true),
       label("Kontekst", header: true), label("Szczegóły", header: true),
-    ], widths: [70, 115, 130, 335]))
+    ], widths: [60, 90, 100, 240]))
     for event in displayedEvents {
       rows.addArrangedSubview(row([
         label(Self.timeFormatter.string(from: event.occurredAt)), label(Self.eventName(event.kind)),
         label(event.issueKey ?? event.branch ?? "—"), label(Self.detail(event)),
-      ], widths: [70, 115, 130, 335]))
+      ], widths: [60, 90, 100, 240]))
     }
     if activity.events.isEmpty {
       let empty = label("Brak zdarzeń Claude Code dla tego dnia.")
@@ -265,12 +252,12 @@ import ThisIsLoggedCore
     if fetchTitles { loadTitles(for: activity.allocations.map(\.issueKey)) }
   }
 
-  private func targetMinutes(for date: Date, now: Date) -> Int? {
+  private func targetMinutes(for date: Date, now: Date, workdayHours: Double) -> Int? {
     let calendar = Calendar.current
     guard !calendar.isDateInWeekend(date) else { return nil }
     let selectedDay = calendar.startOfDay(for: date)
     let today = calendar.startOfDay(for: now)
-    let dailyTarget = Int(settings.workdayHours * 60)
+    let dailyTarget = Int(workdayHours * 60)
     if selectedDay < today { return dailyTarget }
     guard selectedDay == today,
           let start = calendar.date(bySettingHour: 8, minute: 0, second: 0, of: selectedDay) else { return 0 }
@@ -278,9 +265,10 @@ import ThisIsLoggedCore
   }
 
   private func loadTitles(for issues: [String]) {
+    guard let source = settings?.source else { return }
     let pending = Set(issues).filter { $0 != "Nieprzypisane" && issueTitles[$0] == nil && !loadingTitles.contains($0) }
     guard !pending.isEmpty else { return }
-    let client = JiraClient(credentials: settings.source)
+    let client = JiraClient(credentials: source)
     for issue in pending {
       loadingTitles.insert(issue)
       Task { [weak self] in
@@ -299,8 +287,9 @@ import ThisIsLoggedCore
   }
 
   private func signalRange(for issue: String, events: [ActivityEvent], meetings: [CalendarMeeting]) -> String {
-    var dates = events.filter { ($0.issueKey ?? settings.catchAllIssue) == issue }.map(\.occurredAt)
-    if issue == settings.catchAllIssue { dates += meetings.flatMap { [$0.start, $0.end] } }
+    let catchAllIssue = settings?.catchAllIssue ?? "RPR-18"
+    var dates = events.filter { ($0.issueKey ?? catchAllIssue) == issue }.map(\.occurredAt)
+    if issue == catchAllIssue { dates += meetings.flatMap { [$0.start, $0.end] } }
     dates.sort()
     guard let first = dates.first, let last = dates.last else { return "—" }
     let start = Self.timeFormatter.string(from: first)
@@ -310,7 +299,20 @@ import ThisIsLoggedCore
 
   private func resizeDocument() {
     rows.layoutSubtreeIfNeeded()
-    rows.setFrameSize(NSSize(width: max(686, scroll.contentSize.width), height: rows.fittingSize.height))
+    rows.setFrameSize(NSSize(width: max(526, scroll.contentSize.width), height: rows.fittingSize.height))
+  }
+
+  private func renderUnavailable() {
+    rows.arrangedSubviews.forEach { rows.removeArrangedSubview($0); $0.removeFromSuperview() }
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "pl_PL")
+    formatter.dateFormat = "EEEE, d MMMM"
+    dayTitle.stringValue = formatter.string(from: datePicker.dateValue).capitalized
+    dayTotal.stringValue = "Brak konfiguracji"
+    dayTotal.textColor = .secondaryLabelColor
+    dayStatus.stringValue = "Najpierw skonfiguruj Jirę główną."
+    rows.addArrangedSubview(label("Brak danych aktywności."))
+    resizeDocument()
   }
 
   private func row(
@@ -385,7 +387,7 @@ import ThisIsLoggedCore
   }()
 
   func layoutSelfcheck() {
-    window?.contentView?.layoutSubtreeIfNeeded()
+    view.layoutSubtreeIfNeeded()
     issueTitles["ABC-1"] = "ABC-1 — Bardzo długi tytuł zadania, który ma być widoczny w całości i zawinąć się na kolejny wiersz"
     render(DailyActivity(day: "2026-09-07", events: [], allocations: [
       ActivityAllocation(issueKey: "ABC-1", minutes: 15, evidence: 3),
@@ -393,14 +395,14 @@ import ThisIsLoggedCore
       ActivityAllocation(issueKey: "ABC-3", minutes: 15, evidence: 3),
       ActivityAllocation(issueKey: "ABC-4", minutes: 15, evidence: 3),
     ]), fetchTitles: false)
-    window?.contentView?.layoutSubtreeIfNeeded()
+    view.layoutSubtreeIfNeeded()
     resizeDocument()
     let frames = allocationRows.map { $0.convert($0.bounds, to: rows) }.sorted { $0.minY < $1.minY }
-    let separated = frames.allSatisfy { $0.width >= 650 && $0.height >= 15 } &&
+    let separated = frames.allSatisfy { $0.width >= 520 && $0.height >= 15 } &&
       zip(frames, frames.dropFirst()).allSatisfy { $0.maxY <= $1.minY }
     let task = issueFields["ABC-1"]
     precondition(
-      window?.minSize.width == 700 && rows.isFlipped && rows.frame.height > 100 && safety.frame.height > 0 && separated &&
+      rows.isFlipped && rows.frame.width >= 526 && rows.frame.height > 100 && safety.frame.height > 0 && separated &&
         task?.maximumNumberOfLines == 0 && task?.lineBreakMode == .byWordWrapping && (task?.frame.height ?? 0) > 20 &&
         Self.taskLabel("ABC-1", title: "ABC-1 — Napraw formularz") == "ABC-1 · Napraw formularz",
       "Okno aktywności ma nieprawidłowy układ"

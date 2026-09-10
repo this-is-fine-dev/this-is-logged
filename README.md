@@ -108,7 +108,8 @@ Opcję **Zbieraj aktywność z Claude Code** włącza się w ustawieniach aplika
 - rejestruje globalny serwer MCP `this-is-logged` dla wszystkich projektów użytkownika;
 - pozwala agentom odczytać wspólną aktywność i zapisać sugestię przypisania do zadania Jiry.
 
-Menu **Analiza czasu…** otwiera dzienny podgląd sesji ze wszystkich worktree. Branch lub
+Ekran **Aktywność Claude** w ustawieniach pokazuje dzienny podgląd sesji ze wszystkich worktree.
+Pozycja w menu tray i akcja z powiadomienia otwierają bezpośrednio ten ekran. Branch lub
 treść w formacie `ABC-123` daje automatyczne przypisanie, a kolejne polecenia w tej samej sesji
 dziedziczą ostatnie pewne zadanie. Podział jest zaokrąglany globalnie do 5 minut.
 Podgląd pobiera też worklogi z głównej Jiry: już zapisany czas jest przypięty do właściwych zadań,

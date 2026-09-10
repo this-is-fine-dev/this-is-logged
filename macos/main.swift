@@ -375,7 +375,7 @@ private func todayPeriod() -> String {
   private var saveButton: NSButton!
   private var panel: NSPanel!
   private var syncWindow: SyncWindowController?
-  private var activityWindow: ClaudeActivityWindowController?
+  private var activityController: ClaudeActivityViewController?
   private var timer: Timer?
   private var lastStatusKick = Date.distantPast
   private lazy var normalMenuIcon = menuIcon()
@@ -453,7 +453,7 @@ private func todayPeriod() -> String {
     menu.addItem(.separator())
     menu.addItem(sectionItem("APLIKACJA"))
     if configuredClaudeEnabled || configuredCalendarEnabled {
-      menu.addItem(actionItem("Analiza czasu…", #selector(showClaudeActivity), ""))
+      menu.addItem(actionItem("Aktywność Claude…", #selector(showClaudeActivity), ""))
     }
     menu.addItem(actionItem("Ustawienia i połączenia…", #selector(showSettings), ","))
     let updateItem = NSMenuItem(
@@ -573,6 +573,7 @@ private func todayPeriod() -> String {
       ("Synchronizacja", "arrow.triangle.2.circlepath"),
       ("Monitoring", "clock"),
       ("Analiza czasu", "chart.bar.xaxis"),
+      ("Aktywność Claude", "text.justify.left"),
       ("O aplikacji", "info.circle"),
     ].enumerated() {
       let button = settingsSidebarButton(title: item.0, symbol: item.1, tag: index)
@@ -690,6 +691,13 @@ private func todayPeriod() -> String {
       ]),
     ])
 
+    let activityController = ClaudeActivityViewController(settings: try? SettingsStore().load())
+    self.activityController = activityController
+    let activityItem = NSTabViewItem(identifier: "Aktywność Claude")
+    activityItem.label = "Aktywność Claude"
+    activityItem.view = activityController.view
+    settingsTabView.addTabViewItem(activityItem)
+
     let aboutVersion = NSTextField(labelWithString: version)
     aboutVersion.font = .monospacedDigitSystemFont(ofSize: 13, weight: .medium)
     let updateButton = NSButton(title: "Sprawdź aktualizacje…", target: self, action: #selector(checkForUpdates(_:)))
@@ -752,6 +760,7 @@ private func todayPeriod() -> String {
 
   private func activateSettingsPage(_ index: Int) {
     settingsTabView.selectTabViewItem(at: index)
+    if index == 4 { activityController?.refresh() }
     for button in settingsSidebarButtons {
       let selected = button.tag == index
       button.layer?.backgroundColor = selected ? NSColor.controlAccentColor.cgColor : NSColor.clear.cgColor
@@ -1252,9 +1261,8 @@ private func todayPeriod() -> String {
   }
 
   @objc private func showClaudeActivity() {
-    guard let settings = try? SettingsStore().load() else { return }
-    activityWindow = activityWindow ?? ClaudeActivityWindowController(settings: settings)
-    activityWindow?.showWindow(nil)
+    showSettings()
+    activateSettingsPage(4)
   }
 
   @objc private func saveSettings() {
@@ -1366,7 +1374,7 @@ private func todayPeriod() -> String {
           self.configuredWorkdayHours = String(hours)
           self.configuredClaudeEnabled = claudeIntegration
           self.configuredCalendarEnabled = calendarIntegration
-          self.activityWindow = nil
+          self.activityController?.updateSettings(settings)
           self.setupMenu()
           self.saveButton.isEnabled = true
           self.settingsProgress.stopAnimation(nil)
@@ -1452,13 +1460,14 @@ private func todayPeriod() -> String {
     let targetVisibilityIsCorrect = targetBox.isHidden == !syncEnabled
     let monitoringVisible = visible(reminderTimeField, on: 2) && visible(workdayHoursField, on: 2)
     let analysisVisible = visible(calendarPopup, on: 3) && visible(catchAllIssueField, on: 3)
+    let activityVisible = activityController.map { visible($0.view, on: 4) } ?? false
     activateSettingsPage(0)
     panel.contentView?.layoutSubtreeIfNeeded()
     let saveFrame = panel.contentView!.convert(saveButton.bounds, from: saveButton)
     precondition(
-      settingsTabView.numberOfTabViewItems == 5 && settingsSidebarButtons.count == 5 &&
+      settingsTabView.numberOfTabViewItems == 6 && settingsSidebarButtons.count == 6 &&
         settingsSidebarButtons.allSatisfy { $0.frame.width > 0 && (38...39).contains($0.frame.height) } &&
-        sourceVisible && syncVisible && targetVisibilityIsCorrect && monitoringVisible && analysisVisible &&
+        sourceVisible && syncVisible && targetVisibilityIsCorrect && monitoringVisible && analysisVisible && activityVisible &&
         bounds.contains(saveFrame) && saveFrame.height > 0 && !panel.hidesOnDeactivate && panel.delegate === self,
       "Opcje są poza widocznym obszarem"
     )
@@ -1557,7 +1566,7 @@ if let notify = arguments.firstIndex(of: "--notify"), arguments.indices.contains
 } else if arguments.contains("--activity-layout-selfcheck") {
   _ = NSApplication.shared
   let settings = AppSettings(source: JiraCredentials(url: URL(string: "https://jira.example.com")!, token: "test"))
-  let controller = ClaudeActivityWindowController(settings: settings)
+  let controller = ClaudeActivityViewController(settings: settings)
   controller.layoutSelfcheck()
   withExtendedLifetime(controller) {}
 } else if arguments.contains("--selfcheck") {

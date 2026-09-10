@@ -15,7 +15,7 @@ if rg -q '\.utilityWindow' "$PROJECT_ROOT/macos"; then
   exit 1
 fi
 
-for window_source in main.swift SyncWindowController.swift ClaudeActivityWindowController.swift; do
+for window_source in main.swift SyncWindowController.swift; do
   if ! rg -q 'toolbarStyle = \.unifiedCompact' "$PROJECT_ROOT/macos/$window_source"; then
     echo "$window_source does not use the full-size unified title bar" >&2
     exit 1
@@ -28,8 +28,9 @@ for window_source in main.swift SyncWindowController.swift ClaudeActivityWindowC
   fi
 done
 
-if ! rg -q 'window\?\.orderFrontRegardless\(\)' "$PROJECT_ROOT/macos/ClaudeActivityWindowController.swift"; then
-  echo "Claude activity window may remain hidden after the status menu closes" >&2
+if rg -q 'NSWindowController|NSPanel\(' "$PROJECT_ROOT/macos/ClaudeActivityWindowController.swift" ||
+   ! rg -Uq 'private func showClaudeActivity\(\) \{\n    showSettings\(\)\n    activateSettingsPage\(4\)' "$PROJECT_ROOT/macos/main.swift"; then
+  echo "Claude activity must be embedded in the settings window" >&2
   exit 1
 fi
 
