@@ -39,6 +39,7 @@ SIGN_IDENTITY=${MACOS_SIGN_IDENTITY:--}
 codesign --force --deep --sign "$SIGN_IDENTITY" "$APP"
 codesign --verify --deep --strict "$APP"
 "$CONTENTS/MacOS/ThisIsLogged" --selfcheck
+"$CONTENTS/MacOS/ThisIsLogged" --menu-selfcheck | grep -x 'ok'
 
 rm -f "$UPDATE_ZIP"
 /usr/bin/ditto -c -k --sequesterRsrc --keepParent "$APP" "$UPDATE_ZIP"
