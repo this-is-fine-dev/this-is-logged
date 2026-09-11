@@ -24,7 +24,9 @@ jobs:
           /usr/bin/plutil -replace CFBundleVersion -string "1$version" macos/Info.plist
 
       - name: Run checks
-        run: scripts/test.sh
+        run: |
+          brew install ripgrep
+          scripts/test.sh
 
       - name: Build application
         run: scripts/package-macos.sh
