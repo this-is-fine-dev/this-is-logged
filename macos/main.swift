@@ -407,7 +407,8 @@ private func todayPeriod() -> String {
   }
 
   private func setupMenu() {
-    let menu = NSMenu()
+    let menu = item.menu ?? NSMenu()
+    menu.removeAllItems()
     menu.delegate = self
     menu.minimumWidth = 410
     menu.addItem(makeHeader())
@@ -1444,6 +1445,18 @@ private func todayPeriod() -> String {
     }
   }
 
+  func menuSelfcheck() {
+    for enabled in [false, true, true, false] {
+      configuredSyncEnabled = enabled
+      configuredCalendarEnabled = enabled
+      setupMenu()
+      precondition(todayStatus.menu === item.menu)
+      precondition((syncSchedule.menu === item.menu) == enabled)
+      precondition((historyMenu.supermenu === item.menu) == enabled)
+    }
+    print("ok")
+  }
+
   func layoutSelfcheck(syncEnabled: Bool) {
     configuredSyncEnabled = syncEnabled
     configuredCalendarEnabled = true
@@ -1548,6 +1561,11 @@ if let notify = arguments.firstIndex(of: "--notify"), arguments.indices.contains
   }
 } else if arguments.contains("--mcp") {
   ClaudeMCPServer().run()
+} else if arguments.contains("--menu-selfcheck") {
+  _ = NSApplication.shared
+  let delegate = AppDelegate()
+  delegate.menuSelfcheck()
+  withExtendedLifetime(delegate) {}
 } else if arguments.contains("--layout-selfcheck") {
   _ = NSApplication.shared
   let delegate = AppDelegate()
