@@ -360,7 +360,7 @@ private func todayPeriod() -> String {
   private let targetTokenField = NSSecureTextField(frame: .zero)
   private let targetIssueField = NSTextField(frame: .zero)
   private let commentKeysToggle = NSSwitch(frame: .zero)
-  private let syncTimeField = NSTextField(frame: .zero)
+  private let syncFrequencyLabel = NSTextField(labelWithString: "Co 5 minut i po wybudzeniu")
   private let reminderTimeField = NSTextField(frame: .zero)
   private let workdayHoursField = NSTextField(frame: .zero)
   private let claudeToggle = NSSwitch(frame: .zero)
@@ -380,7 +380,6 @@ private func todayPeriod() -> String {
   private var lastStatusKick = Date.distantPast
   private lazy var normalMenuIcon = menuIcon()
   private var configuredSyncEnabled = savedSetting("SYNC_ENABLED", fallback: environment["THIS_IS_LOGGED_SYNC_ENABLED"] ?? "0") == "1"
-  private var configuredSyncTime = savedSetting("SYNC_TIME", fallback: environment["THIS_IS_LOGGED_SCHEDULE"] ?? "23:00")
   private var configuredReminderTime = savedSetting("REMINDER_TIME", fallback: environment["THIS_IS_LOGGED_REMINDER"] ?? "16:00")
   private var configuredWorkdayHours = savedSetting("WORKDAY_HOURS", fallback: environment["THIS_IS_LOGGED_WORKDAY_HOURS"] ?? "8")
   private var configuredClaudeEnabled = savedSetting("CLAUDE_ENABLED", fallback: "0") == "1"
@@ -630,7 +629,7 @@ private func todayPeriod() -> String {
       field.widthAnchor.constraint(equalToConstant: 300).isActive = true
     }
     for field in [sourceURLField, sourceEmailField, sourceTokenField, targetURLField, targetEmailField, targetTokenField,
-                  targetIssueField, syncTimeField, reminderTimeField, workdayHoursField, catchAllIssueField] {
+                  targetIssueField, reminderTimeField, workdayHoursField, catchAllIssueField] {
       field.menu = makeTextEditingMenu()
     }
     sourceURLField.placeholderString = "https://firma.atlassian.net"
@@ -643,11 +642,9 @@ private func todayPeriod() -> String {
     catchAllIssueField.placeholderString = "RPR-18"
     syncToggle.target = self
     syncToggle.action = #selector(toggleSynchronization)
-    syncTimeField.alignment = .center
-    syncTimeField.widthAnchor.constraint(equalToConstant: 90).isActive = true
     targetBox = settingsSection("JIRA DOCELOWA", [
       ("URL", targetURLField), ("Email", targetEmailField), ("Token", targetTokenField),
-      ("Zadanie", targetIssueField), ("Automatyczny zapis", syncTimeField), ("Klucze w komentarzu", commentKeysToggle),
+      ("Zadanie", targetIssueField), ("Automatyczny zapis", syncFrequencyLabel), ("Klucze w komentarzu", commentKeysToggle),
     ])
 
     for field in [reminderTimeField, workdayHoursField] {
@@ -1042,7 +1039,7 @@ private func todayPeriod() -> String {
     }
     reminderSchedule.title = isWeekend ? "Przypomnienia wrócą w poniedziałek" : "Przypomnienie \(configuredReminderTime)"
     if configuredSyncEnabled {
-      syncSchedule.title = "Automatyczny zapis \(configuredSyncTime)"
+      syncSchedule.title = "Automatyczny zapis co 5 minut"
       renderHistory(runs)
     }
     if let image = normalMenuIcon {
@@ -1206,7 +1203,6 @@ private func todayPeriod() -> String {
     targetIssueField.stringValue = values["DST_ISSUE"] ?? ""
     syncToggle.state = (values["SYNC_ENABLED"] == "1" || configuredSyncEnabled) ? .on : .off
     commentKeysToggle.state = values["COMMENT_KEYS"] == "1" ? .on : .off
-    syncTimeField.stringValue = values["SYNC_TIME"] ?? configuredSyncTime
     reminderTimeField.stringValue = values["REMINDER_TIME"] ?? configuredReminderTime
     workdayHoursField.stringValue = values["WORKDAY_HOURS"] ?? configuredWorkdayHours
     claudeToggle.state = values["CLAUDE_ENABLED"] == "1" ? .on : .off
@@ -1279,7 +1275,6 @@ private func todayPeriod() -> String {
     let targetIssue = targetIssueField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
     let catchAllIssue = catchAllIssueField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
     let calendarIdentifier = calendarPopup.selectedItem?.representedObject as? String ?? ""
-    let sync = syncTimeField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
     let reminder = reminderTimeField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
     let hoursText = workdayHoursField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: ",", with: ".")
     let validURL: (String) -> Bool = { value in
@@ -1318,7 +1313,7 @@ private func todayPeriod() -> String {
       settingsFeedback.stringValue = "Nadaj dostęp i wybierz konto kalendarza służbowego."
       return
     }
-    guard (!synchronization || clockParts(sync) != nil), clockParts(reminder) != nil,
+    guard clockParts(reminder) != nil,
           let hours = Double(hoursText), hours > 0, hours <= 24 else {
       settingsFeedback.textColor = .systemRed
       settingsFeedback.stringValue = "Podaj godziny w formacie GG:MM i pełny dzień od 0 do 24 h."
@@ -1333,7 +1328,7 @@ private func todayPeriod() -> String {
       target: targetAddress.map { JiraCredentials(url: $0, email: targetEmail, token: targetToken) },
       targetIssue: targetIssue,
       commentIssueKeys: commentKeysToggle.state == .on,
-      synchronizationTime: sync,
+      synchronizationTime: savedSetting("SYNC_TIME", fallback: "23:00"),
       reminderTime: reminder,
       workdayHours: hours,
       claudeIntegrationEnabled: claudeIntegration,
@@ -1370,7 +1365,6 @@ private func todayPeriod() -> String {
         let persistent = deliverNotification("Konfiguracja działa. Monitoring raportów jest aktywny.") && persistentNotificationsEnabled()
         await MainActor.run {
           self.configuredSyncEnabled = synchronization
-          self.configuredSyncTime = sync
           self.configuredReminderTime = reminder
           self.configuredWorkdayHours = String(hours)
           self.configuredClaudeEnabled = claudeIntegration
@@ -1408,7 +1402,7 @@ private func todayPeriod() -> String {
       .appendingPathComponent("Library/LaunchAgents/\(statusLabel).plist")
     guard configurationComplete(readSettings()), let executable = Bundle.main.executableURL else { return }
     let installed = (try? String(contentsOf: agent, encoding: .utf8))?.contains(executable.path) == true
-    let retriesInstalled = !configuredSyncEnabled || LaunchdManager().synchronizationRetriesInstalled()
+    let retriesInstalled = !configuredSyncEnabled || LaunchdManager().synchronizationScheduleInstalled()
     guard !installed || !retriesInstalled else { return }
     let appURL = Bundle.main.bundleURL
     Task.detached {
@@ -1470,7 +1464,7 @@ private func todayPeriod() -> String {
       return bounds.contains(frame) && frame.height > 0 && !view.isHiddenOrHasHiddenAncestor
     }
     let sourceVisible = visible(sourceURLField, on: 0)
-    let syncVisible = !syncEnabled || visible(syncTimeField, on: 1)
+    let syncVisible = !syncEnabled || visible(syncFrequencyLabel, on: 1)
     let targetVisibilityIsCorrect = targetBox.isHidden == !syncEnabled
     let monitoringVisible = visible(reminderTimeField, on: 2) && visible(workdayHoursField, on: 2)
     let analysisVisible = visible(calendarPopup, on: 3) && visible(catchAllIssueField, on: 3)
@@ -1535,11 +1529,6 @@ private func runAgentMode(_ operation: @escaping @Sendable () async throws -> Vo
     exit(1)
   }
   exit(0)
-}
-
-private func syncMonth(_ now: LocalDay) -> (LocalDay, LocalDay) {
-  let first = LocalDay("\(now.monthID)-01")!
-  return (first, first.adding(months: 1).adding(days: -1))
 }
 
 private func nativeHours(_ seconds: Int) -> String { String(format: "%.2f", Double(seconds) / 3600) }
@@ -1656,8 +1645,8 @@ if let notify = arguments.firstIndex(of: "--notify"), arguments.indices.contains
     let settings = try SettingsStore().load()
     let engine = TimeReportEngine.live(settings: settings)
     let now = LocalDay(Date())
-    let (from, to) = syncMonth(now)
-    let plan = try await engine.syncPlan(from: from, to: to)
+    let window = Reporting.synchronizationWindow(now: now)
+    let plan = try await engine.syncPlan(from: window.lowerBound, to: window.upperBound)
     if let timestamp = plan.cachedSourceAt {
       print("Źródło niedostępne — używam godzin pobranych \(timestamp). Cel odczytany na żywo.")
     }

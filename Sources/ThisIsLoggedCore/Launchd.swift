@@ -15,15 +15,15 @@ public final class LaunchdManager: @unchecked Sendable {
     self.home = home
   }
 
-  public static var synchronizationRetryPolicy: [String: Any] {
-    ["KeepAlive": ["SuccessfulExit": false], "ThrottleInterval": 15 * 60]
+  public static var synchronizationSchedule: [String: Any] {
+    ["RunAtLoad": true, "StartCalendarInterval": stride(from: 0, to: 60, by: 5).map { ["Minute": $0] }]
   }
 
-  public func synchronizationRetriesInstalled() -> Bool {
+  public func synchronizationScheduleInstalled() -> Bool {
     let file = home.appendingPathComponent("Library/LaunchAgents/\(Self.labels.sync).plist")
     guard let data = try? Data(contentsOf: file),
           let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else { return false }
-    return Self.synchronizationRetryPolicy.allSatisfy { key, value in
+    return Self.synchronizationSchedule.allSatisfy { key, value in
       (plist[key] as? NSObject)?.isEqual(value) == true
     }
   }
@@ -77,12 +77,10 @@ public final class LaunchdManager: @unchecked Sendable {
     try write(reminderPlist, to: plists["reminder"]!)
     try write(statusPlist, to: plists["status"]!)
     if settings.synchronizationEnabled {
-      let sync = try clock(settings.synchronizationTime)
       var syncPlist: [String: Any] = [
         "Label": labels.sync,
-        "StartCalendarInterval": ["Hour": sync.hour, "Minute": sync.minute],
       ]
-      syncPlist.merge(Self.synchronizationRetryPolicy) { _, policy in policy }
+      syncPlist.merge(Self.synchronizationSchedule) { _, policy in policy }
       syncPlist.merge(backend(["--agent-sync"], log(""))) { current, _ in current }
       try write(syncPlist, to: plists["sync"]!)
     } else {

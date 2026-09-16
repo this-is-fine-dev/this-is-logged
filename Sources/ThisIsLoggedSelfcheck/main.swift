@@ -5,13 +5,20 @@ let retryHome = FileManager.default.temporaryDirectory.appendingPathComponent(UU
 let retryManager = LaunchdManager(home: retryHome)
 let retryPlist = retryHome.appendingPathComponent("Library/LaunchAgents/\(LaunchdManager.labels.sync).plist")
 try FileManager.default.createDirectory(at: retryPlist.deletingLastPathComponent(), withIntermediateDirectories: true)
-precondition(!retryManager.synchronizationRetriesInstalled())
-let retryPolicy = LaunchdManager.synchronizationRetryPolicy
-precondition((retryPolicy["KeepAlive"] as? [String: Bool]) == ["SuccessfulExit": false])
-precondition(retryPolicy["ThrottleInterval"] as? Int == 900)
-for (plist, expected) in [(["StartCalendarInterval": ["Hour": 18, "Minute": 0]] as [String: Any], false), (retryPolicy, true)] {
+precondition(!retryManager.synchronizationScheduleInstalled())
+let retryPolicy = LaunchdManager.synchronizationSchedule
+precondition(retryPolicy["RunAtLoad"] as? Bool == true)
+precondition(retryPolicy["StartCalendarInterval"] as? [[String: Int]] == stride(from: 0, to: 60, by: 5).map { ["Minute": $0] })
+precondition(retryPolicy["KeepAlive"] == nil)
+for day in ["2026-09-16", "2026-10-01", "2027-01-01", "2028-03-01"] {
+  let now = LocalDay(day)!
+  let window = Reporting.synchronizationWindow(now: now)
+  precondition(window.contains(now) && window.contains(now.adding(days: -1)))
+  precondition(window.lowerBound == LocalDay("\(now.monthID)-01")!.adding(months: -1) && window.upperBound == now)
+}
+for (plist, expected) in [(["StartCalendarInterval": ["Hour": 18, "Minute": 0]] as [String: Any], false), (["KeepAlive": ["SuccessfulExit": false], "ThrottleInterval": 900], false), (retryPolicy, true)] {
   try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0).write(to: retryPlist)
-  precondition(retryManager.synchronizationRetriesInstalled() == expected)
+  precondition(retryManager.synchronizationScheduleInstalled() == expected)
 }
 try FileManager.default.removeItem(at: retryHome)
 

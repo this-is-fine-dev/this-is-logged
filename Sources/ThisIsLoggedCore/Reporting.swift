@@ -133,6 +133,10 @@ public struct ReportAnalysis: Equatable, Codable, Sendable {
 }
 
 public enum Reporting {
+  public static func synchronizationWindow(now: LocalDay) -> ClosedRange<LocalDay> {
+    LocalDay("\(now.monthID)-01")!.adding(months: -1)...now
+  }
+
   public static func reportWindow(now: LocalDay) -> ClosedRange<LocalDay> {
     let weekFrom = workWeek(now: now).lowerBound
     return min(LocalDay("\(now.monthID)-01")!, weekFrom)...now

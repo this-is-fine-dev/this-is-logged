@@ -57,10 +57,11 @@ również wcześniejsze niepełne dni miesiąca.
 różnicę, gdy cel ma mniej czasu niż źródło, pomija zgodne dni i zgłasza do ręcznego rozwiązania
 przypadki, w których cel ma więcej czasu.
 
-Po błędzie `launchd` ponawia próbę nie częściej niż co 15 minut, aż proces zakończy się
-powodzeniem. Synchronizacja uruchamia się też przy załadowaniu agenta (m.in. po zalogowaniu).
-Każda próba ponownie porównuje godziny z obu Jir dla bieżącego miesiąca i dopisuje brakującą
-różnicę. Aktualizacja aplikacji automatycznie uzupełnia starszy harmonogram o ponawianie.
+`launchd` porównuje obie Jiry co 5 minut, po zalogowaniu oraz po wybudzeniu komputera.
+Każda próba sprawdza bieżący i poprzedni miesiąc do dzisiaj i dopisuje tylko brakującą różnicę.
+Dzięki temu zaległości z poprzedniego dnia są uzupełniane rano także na granicy miesięcy i lat.
+Po błędzie kolejna próba nastąpi przy następnym terminie. Aktualizacja automatycznie zastępuje
+starszy harmonogram. Komputer musi być włączony, a Jira docelowa dostępna.
 
 Po udanym odczycie źródła raport przechowuje godziny dla poszczególnych dni oraz identyfikator
 konfiguracji konta (skrót, bez tokenu). Gdy źródło jest niedostępne, synchronizacja może użyć
