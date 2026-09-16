@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 public struct ReportSnapshot: Codable, Equatable, Sendable {
@@ -15,6 +16,8 @@ public struct ReportSnapshot: Codable, Equatable, Sendable {
   public var month: PeriodReport?
   public var underreported: [LocalDay]?
   public var monthCapacity: MonthCapacity?
+  public var sourceDays: [LocalDay: DayTotal]?
+  public var sourceIdentity: String?
 
   public init(
     checkedAt: String,
@@ -73,6 +76,7 @@ public struct SyncPlan: Equatable, Codable, Sendable {
   public let to: LocalDay
   public let targetIssue: String
   public let items: [SyncItem]
+  public var cachedSourceAt: String? = nil
 }
 
 public struct SyncResult: Equatable, Codable, Sendable {
@@ -91,18 +95,21 @@ public struct TimeReportEngine: Sendable {
   public let settings: AppSettings
   private let source: any JiraAccess
   private let target: (any JiraAccess)?
+  private let snapshots: SnapshotStore?
 
-  public init(settings: AppSettings, source: any JiraAccess, target: (any JiraAccess)? = nil) {
+  public init(settings: AppSettings, source: any JiraAccess, target: (any JiraAccess)? = nil, snapshots: SnapshotStore? = nil) {
     self.settings = settings
     self.source = source
     self.target = target
+    self.snapshots = snapshots
   }
 
   public static func live(settings: AppSettings) -> Self {
     Self(
       settings: settings,
       source: JiraClient(credentials: settings.source),
-      target: settings.target.map { JiraClient(credentials: $0) }
+      target: settings.target.map { JiraClient(credentials: $0) },
+      snapshots: SnapshotStore()
     )
   }
 
@@ -124,7 +131,7 @@ public struct TimeReportEngine: Sendable {
     }
     let reports = Reporting.analyze(now: now, expectedSeconds: expected, sourceDays: sourceDays, targetDays: targetDays)
     let timestamp = Self.iso(checkedAt)
-    return ReportSnapshot(
+    var snapshot = ReportSnapshot(
       checkedAt: timestamp,
       lastSuccessfulAt: timestamp,
       syncEnabled: settings.synchronizationEnabled,
@@ -138,6 +145,14 @@ public struct TimeReportEngine: Sendable {
       underreported: reports.underreported,
       monthCapacity: reports.monthCapacity
     )
+    snapshot.sourceDays = sourceDays
+    snapshot.sourceIdentity = sourceIdentity
+    return snapshot
+  }
+
+  private var sourceIdentity: String {
+    let data = try! JSONEncoder().encode([settings.source.url.absoluteString, settings.source.email, settings.source.token])
+    return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
   }
 
   public func reminder(now: LocalDay = LocalDay(Date())) async throws -> ReminderDecision {
@@ -161,12 +176,22 @@ public struct TimeReportEngine: Sendable {
 
   public func syncPlan(from: LocalDay, to: LocalDay) async throws -> SyncPlan {
     guard settings.synchronizationEnabled, let target else { throw SettingsError.invalidTarget }
-    async let sourceUser = source.currentUser()
-    async let targetUser = target.currentUser()
-    let users = try await (sourceUser, targetUser)
-    async let sourceDays = source.dailyWorklogs(userID: users.0.id, from: from, to: to)
-    async let targetDays = target.issueWorklogs(issue: settings.targetIssue, userID: users.1.id)
-    let (sourceValues, targetValues) = try await (sourceDays, targetDays)
+    let sourceValues: [LocalDay: DayTotal]
+    var cachedSourceAt: String?
+    do {
+      let user = try await source.currentUser()
+      sourceValues = try await source.dailyWorklogs(userID: user.id, from: from, to: to)
+    } catch {
+      try Task.checkCancellation()
+      guard let cached = await snapshots?.read(), cached.sourceIdentity == sourceIdentity,
+            let days = cached.sourceDays, let timestamp = cached.lastSuccessfulAt else { throw error }
+      let matchingDays = days.filter { $0.key >= from && $0.key <= to }
+      guard !matchingDays.isEmpty else { throw error }
+      sourceValues = matchingDays
+      cachedSourceAt = timestamp
+    }
+    let targetUser = try await target.currentUser()
+    let targetValues = try await target.issueWorklogs(issue: settings.targetIssue, userID: targetUser.id)
     let items = sourceValues.keys.sorted().map { day in
       let source = sourceValues[day]!
       let destination = targetValues[day, default: DayTotal()]
@@ -180,11 +205,14 @@ public struct TimeReportEngine: Sendable {
         state: state
       )
     }
-    return SyncPlan(from: from, to: to, targetIssue: settings.targetIssue, items: items)
+    return SyncPlan(from: from, to: to, targetIssue: settings.targetIssue, items: items, cachedSourceAt: cachedSourceAt)
   }
 
   public func execute(_ plan: SyncPlan, actions: [LocalDay: SyncAction] = [:]) async throws -> SyncResult {
     guard settings.synchronizationEnabled, let target else { throw SettingsError.invalidTarget }
+    if plan.cachedSourceAt != nil && actions.contains(where: { $0.value != .skip }) {
+      throw RuntimeError.savedFailure("Dane z pamięci pozwalają wyłącznie uzupełniać brakującą różnicę, bez nadpisywania i sumowania.")
+    }
     var writtenDays = 0
     var writtenSeconds = 0
     var collisions = 0

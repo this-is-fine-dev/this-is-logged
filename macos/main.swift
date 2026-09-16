@@ -1658,6 +1658,9 @@ if let notify = arguments.firstIndex(of: "--notify"), arguments.indices.contains
     let now = LocalDay(Date())
     let (from, to) = syncMonth(now)
     let plan = try await engine.syncPlan(from: from, to: to)
+    if let timestamp = plan.cachedSourceAt {
+      print("Źródło niedostępne — używam godzin pobranych \(timestamp). Cel odczytany na żywo.")
+    }
     for item in plan.items {
       switch item.state {
       case .add:
@@ -1677,6 +1680,9 @@ if let notify = arguments.firstIndex(of: "--notify"), arguments.indices.contains
     print("zapisano: \(nativeHours(result.writtenSeconds))h -> \(settings.targetIssue) (\(now.monthID))")
     if result.collisionsSkipped > 0 {
       _ = deliverNotification("Wykryto \(result.collisionsSkipped) różnice w \(now.monthID). Automatyzacja niczego nie nadpisała.", category: collisionCategory)
+    }
+    if plan.cachedSourceAt != nil {
+      throw RuntimeError.savedFailure("Uzupełniono dostępne dane z pamięci. Źródło nadal niedostępne — synchronizacja zostanie ponowiona.")
     }
   }
 } else if arguments.contains("--check-config-native") {

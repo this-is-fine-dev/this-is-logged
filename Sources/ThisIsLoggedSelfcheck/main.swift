@@ -59,7 +59,7 @@ final class FailureBox: @unchecked Sendable { var error: Error? }
 actor FakeJira: JiraAccess {
   let user: JiraUser
   let daily: [LocalDay: DayTotal]
-  let issue: [LocalDay: DayTotal]
+  var issue: [LocalDay: DayTotal]
   var added: [LocalDay] = []
   var deleted: [String] = []
 
@@ -75,7 +75,10 @@ actor FakeJira: JiraAccess {
   }
   func issueWorklogs(issue: String, userID: String) async throws -> [LocalDay: DayTotal] { self.issue }
   func issueSummary(_ issue: String) async throws -> String { issue }
-  func addWorklog(issue: String, day: LocalDay, seconds: Int, comment: String?) async throws { added.append(day) }
+  func addWorklog(issue: String, day: LocalDay, seconds: Int, comment: String?) async throws {
+    added.append(day)
+    self.issue[day, default: DayTotal()].seconds += seconds
+  }
   func deleteWorklog(issue: String, id: String) async throws { deleted.append(id) }
 }
 
@@ -434,6 +437,33 @@ Task.detached {
     let cached = await cache.read()
     precondition(cached?.today?.sourceSeconds == 3600 && cached?.lastSuccessfulAt == "1970-01-01T00:00:00.000Z")
     precondition(cached?.error == "offline")
+    let cachedDay = LocalDay("2026-09-02")!
+    let cachedTarget = FakeJira(user: "target", issue: [cachedDay: DayTotal(seconds: 7200)])
+    let offlineEngine = TimeReportEngine(settings: engineSettings, source: FailingJira(), target: cachedTarget, snapshots: cache)
+    let offlinePlan = try await offlineEngine.syncPlan(from: cachedDay, to: cachedDay)
+    precondition(offlinePlan.cachedSourceAt == "1970-01-01T00:00:00.000Z")
+    precondition(offlinePlan.items.first?.sourceSeconds == 28800 && offlinePlan.items.first?.secondsToAdd == 21600)
+    let offlineResult = try await offlineEngine.execute(offlinePlan)
+    precondition(offlineResult.writtenSeconds == 21600, "Cached 8h must add only the missing 6h")
+    let repeatedPlan = try await offlineEngine.syncPlan(from: cachedDay, to: cachedDay)
+    let repeatedResult = try await offlineEngine.execute(repeatedPlan)
+    precondition(repeatedResult.writtenSeconds == 0, "Retry must reread target and avoid duplicate worklogs")
+    do {
+      _ = try await offlineEngine.execute(offlinePlan, actions: [cachedDay: .replace])
+      preconditionFailure("Cached source must not allow destructive replacement")
+    } catch RuntimeError.savedFailure {}
+    var otherSettings = engineSettings
+    otherSettings.source.token = "another-account"
+    for blocked in [
+      TimeReportEngine(settings: otherSettings, source: FailingJira(), target: cachedTarget, snapshots: cache),
+      TimeReportEngine(settings: engineSettings, source: FailingJira(), target: FailingJira(), snapshots: cache),
+      TimeReportEngine(settings: engineSettings, source: FailingJira(), target: cachedTarget),
+    ] {
+      do {
+        _ = try await blocked.syncPlan(from: cachedDay, to: cachedDay)
+        preconditionFailure("Wrong account, missing cache or offline target must stop synchronization")
+      } catch {}
+    }
     try? FileManager.default.removeItem(at: cacheDirectory)
   } catch {
     failure.error = error

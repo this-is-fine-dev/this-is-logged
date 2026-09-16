@@ -128,8 +128,13 @@ import ThisIsLoggedCore
         action.addItem(withTitle: "Pomiń — zgodne")
         action.isEnabled = false
       case .collision:
-        action.addItems(withTitles: ["Pomiń", "Zsumuj", "Nadpisz"])
-        choices[item.day] = action
+        if plan.cachedSourceAt != nil {
+          action.addItem(withTitle: "Pomiń — źródło offline")
+          action.isEnabled = false
+        } else {
+          action.addItems(withTitles: ["Pomiń", "Zsumuj", "Nadpisz"])
+          choices[item.day] = action
+        }
       }
       rows.addArrangedSubview(row([
         item.day.description,
@@ -142,6 +147,9 @@ import ThisIsLoggedCore
     }
     let collisions = plan.items.filter { $0.state == .collision }.count
     feedback.stringValue = "\(plan.items.count) dni · różnice: \(collisions)"
+    if let timestamp = plan.cachedSourceAt {
+      feedback.stringValue += " · źródło z pamięci: \(timestamp)"
+    }
     feedback.textColor = collisions == 0 ? .systemGreen : .systemOrange
     executeButton.isEnabled = plan.items.contains { $0.state == .add } || collisions > 0
     resizeDocument()
@@ -182,6 +190,9 @@ import ThisIsLoggedCore
     let alert = NSAlert()
     alert.messageText = "Zapisać \(writes) dni do \(plan.targetIssue)?"
     alert.informativeText = "Operacja zmieni worklogi w Jirze docelowej."
+    if let timestamp = plan.cachedSourceAt {
+      alert.informativeText += " Źródło jest niedostępne; używam godzin pobranych \(timestamp)."
+    }
     alert.addButton(withTitle: "Zapisz")
     alert.addButton(withTitle: "Anuluj")
     guard alert.runModal() == .alertFirstButtonReturn else { return }

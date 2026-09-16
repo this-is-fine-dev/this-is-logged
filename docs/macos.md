@@ -62,6 +62,14 @@ powodzeniem. Synchronizacja uruchamia się też przy załadowaniu agenta (m.in. 
 Każda próba ponownie porównuje godziny z obu Jir dla bieżącego miesiąca i dopisuje brakującą
 różnicę. Aktualizacja aplikacji automatycznie uzupełnia starszy harmonogram o ponawianie.
 
+Po udanym odczycie źródła raport przechowuje godziny dla poszczególnych dni oraz identyfikator
+konfiguracji konta (skrót, bez tokenu). Gdy źródło jest niedostępne, synchronizacja może użyć
+tych danych, ale zawsze odczytuje aktualny stan docelowej Jiry i dopisuje tylko brakującą różnicę.
+Brak danych w pamięci albo zmiana konta blokuje ten tryb. Dane z pamięci nie służą do nadpisywania
+ani sumowania kolizji. Log i okno synchronizacji pokazują datę danych źródłowych.
+Po takim zapisie agent nadal zgłasza niedostępność źródła, aby ponawiać próby aż do jego powrotu.
+Funkcja wymaga przynajmniej jednego udanego odświeżenia źródła po aktualizacji do 2.3.16.
+
 ### Menu
 
 `dev.this-is-fine.this-is-logged.menu` uruchamia aplikację po zalogowaniu użytkownika.
