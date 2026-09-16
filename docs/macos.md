@@ -57,6 +57,11 @@ również wcześniejsze niepełne dni miesiąca.
 różnicę, gdy cel ma mniej czasu niż źródło, pomija zgodne dni i zgłasza do ręcznego rozwiązania
 przypadki, w których cel ma więcej czasu.
 
+Po błędzie `launchd` ponawia próbę nie częściej niż co 15 minut, aż proces zakończy się
+powodzeniem. Synchronizacja uruchamia się też przy załadowaniu agenta (m.in. po zalogowaniu).
+Każda próba ponownie porównuje godziny z obu Jir dla bieżącego miesiąca i dopisuje brakującą
+różnicę. Aktualizacja aplikacji automatycznie uzupełnia starszy harmonogram o ponawianie.
+
 ### Menu
 
 `dev.this-is-fine.this-is-logged.menu` uruchamia aplikację po zalogowaniu użytkownika.

@@ -1,6 +1,20 @@
 import Foundation
 import ThisIsLoggedCore
 
+let retryHome = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+let retryManager = LaunchdManager(home: retryHome)
+let retryPlist = retryHome.appendingPathComponent("Library/LaunchAgents/\(LaunchdManager.labels.sync).plist")
+try FileManager.default.createDirectory(at: retryPlist.deletingLastPathComponent(), withIntermediateDirectories: true)
+precondition(!retryManager.synchronizationRetriesInstalled())
+let retryPolicy = LaunchdManager.synchronizationRetryPolicy
+precondition((retryPolicy["KeepAlive"] as? [String: Bool]) == ["SuccessfulExit": false])
+precondition(retryPolicy["ThrottleInterval"] as? Int == 900)
+for (plist, expected) in [(["StartCalendarInterval": ["Hour": 18, "Minute": 0]] as [String: Any], false), (retryPolicy, true)] {
+  try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0).write(to: retryPlist)
+  precondition(retryManager.synchronizationRetriesInstalled() == expected)
+}
+try FileManager.default.removeItem(at: retryHome)
+
 final class StubProtocol: URLProtocol, @unchecked Sendable {
   nonisolated(unsafe) static var requests: [URLRequest] = []
 

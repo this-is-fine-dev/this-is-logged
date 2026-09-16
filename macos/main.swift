@@ -1408,7 +1408,8 @@ private func todayPeriod() -> String {
       .appendingPathComponent("Library/LaunchAgents/\(statusLabel).plist")
     guard configurationComplete(readSettings()), let executable = Bundle.main.executableURL else { return }
     let installed = (try? String(contentsOf: agent, encoding: .utf8))?.contains(executable.path) == true
-    guard !installed else { return }
+    let retriesInstalled = !configuredSyncEnabled || LaunchdManager().synchronizationRetriesInstalled()
+    guard !installed || !retriesInstalled else { return }
     let appURL = Bundle.main.bundleURL
     Task.detached {
       do {

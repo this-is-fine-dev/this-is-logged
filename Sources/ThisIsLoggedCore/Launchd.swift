@@ -15,6 +15,19 @@ public final class LaunchdManager: @unchecked Sendable {
     self.home = home
   }
 
+  public static var synchronizationRetryPolicy: [String: Any] {
+    ["KeepAlive": ["SuccessfulExit": false], "ThrottleInterval": 15 * 60]
+  }
+
+  public func synchronizationRetriesInstalled() -> Bool {
+    let file = home.appendingPathComponent("Library/LaunchAgents/\(Self.labels.sync).plist")
+    guard let data = try? Data(contentsOf: file),
+          let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else { return false }
+    return Self.synchronizationRetryPolicy.allSatisfy { key, value in
+      (plist[key] as? NSObject)?.isEqual(value) == true
+    }
+  }
+
   public func reconcile(settings: AppSettings, executable: URL, app: URL) throws {
     let agents = home.appendingPathComponent("Library/LaunchAgents", isDirectory: true)
     let logs = home.appendingPathComponent("Library/Logs", isDirectory: true)
@@ -69,6 +82,7 @@ public final class LaunchdManager: @unchecked Sendable {
         "Label": labels.sync,
         "StartCalendarInterval": ["Hour": sync.hour, "Minute": sync.minute],
       ]
+      syncPlist.merge(Self.synchronizationRetryPolicy) { _, policy in policy }
       syncPlist.merge(backend(["--agent-sync"], log(""))) { current, _ in current }
       try write(syncPlist, to: plists["sync"]!)
     } else {
