@@ -1533,6 +1533,11 @@ private func runAgentMode(_ operation: @escaping @Sendable () async throws -> Vo
 
 private func nativeHours(_ seconds: Int) -> String { String(format: "%.2f", Double(seconds) / 3600) }
 
+private func synchronizationNotification(_ result: SyncResult, issue: String) -> String? {
+  guard result.writtenSeconds > 0 else { return nil }
+  return "Zsynchronizowano \(nativeHours(result.writtenSeconds)) h do \(issue) · liczba dni: \(result.writtenDays)."
+}
+
 private let arguments = ProcessInfo.processInfo.arguments
 
 if let notify = arguments.firstIndex(of: "--notify"), arguments.indices.contains(notify + 1) {
@@ -1578,6 +1583,9 @@ if let notify = arguments.firstIndex(of: "--notify"), arguments.indices.contains
   controller.layoutSelfcheck()
   withExtendedLifetime(controller) {}
 } else if arguments.contains("--selfcheck") {
+  precondition(synchronizationNotification(SyncResult(writtenDays: 2, writtenSeconds: 30600, collisionsSkipped: 0), issue: "AUT-1") == "Zsynchronizowano 8.50 h do AUT-1 · liczba dni: 2.")
+  precondition(synchronizationNotification(SyncResult(writtenDays: 0, writtenSeconds: 0, collisionsSkipped: 0), issue: "AUT-1") == nil)
+  precondition(synchronizationNotification(SyncResult(writtenDays: 0, writtenSeconds: 0, collisionsSkipped: 1), issue: "AUT-1") == nil)
   let runs = parseLog("""
   --- 2026-09-01T21:00:00.000Z ---
   2026-09-01  8.00h  ABC-1
@@ -1665,6 +1673,11 @@ if let notify = arguments.firstIndex(of: "--notify"), arguments.indices.contains
       return
     }
     let result = try await engine.execute(plan)
+    if let message = synchronizationNotification(result, issue: settings.targetIssue) {
+      if !deliverNotification(message) {
+        fputs("Nie udało się wyświetlić powiadomienia o zapisanej synchronizacji.\n", stderr)
+      }
+    }
     _ = try? await SnapshotStore().refresh(using: engine)
     print("zapisano: \(nativeHours(result.writtenSeconds))h -> \(settings.targetIssue) (\(now.monthID))")
     if result.collisionsSkipped > 0 {
