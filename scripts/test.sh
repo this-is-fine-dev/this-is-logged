@@ -84,6 +84,11 @@ if ! rg -Uq 'private func presentUpdater\(_ sender: Any\?\) \{\n    NSApplicatio
   exit 1
 fi
 
+if ! rg -Uq 'if updaterController\.updater\.automaticallyChecksForUpdates \{\n      updaterController\.updater\.checkForUpdatesInBackground\(\)\n    \}' "$PROJECT_ROOT/macos/main.swift"; then
+  echo "Sparkle must check for updates in the background on launch" >&2
+  exit 1
+fi
+
 if ! rg -Uq '@objc private func showSettings\(\) \{\n    NSApp\.setActivationPolicy\(\.regular\)' "$PROJECT_ROOT/macos/main.swift" ||
    ! rg -Uq 'func windowWillClose\([^}]+NSApp\.setActivationPolicy\(\.accessory\)' "$PROJECT_ROOT/macos/main.swift"; then
   echo "settings window does not expose and dismiss the Dock icon" >&2

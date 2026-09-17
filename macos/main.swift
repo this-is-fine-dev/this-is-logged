@@ -307,6 +307,9 @@ private func period() -> String {
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     _ = updaterController
+    if updaterController.updater.automaticallyChecksForUpdates {
+      updaterController.updater.checkForUpdatesInBackground()
+    }
     NSApp.mainMenu = makeMainMenu()
     let center = UNUserNotificationCenter.current()
     center.delegate = self
@@ -450,9 +453,10 @@ private func period() -> String {
 
     let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"
     let updateButton = NSButton(title: "Sprawdź aktualizacje · v\(version)", target: self, action: #selector(checkForUpdates(_:)))
-    updateButton.bezelStyle = .inline
+    updateButton.isBordered = false
     updateButton.font = .systemFont(ofSize: 10)
     updateButton.contentTintColor = .tertiaryLabelColor
+    updateButton.alignment = .left
     updateButton.translatesAutoresizingMaskIntoConstraints = false
     sidebar.addSubview(updateButton)
 
