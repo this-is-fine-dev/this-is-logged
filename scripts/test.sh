@@ -29,7 +29,7 @@ for window_source in main.swift SyncWindowController.swift; do
 done
 
 if rg -q 'NSWindowController|NSPanel\(' "$PROJECT_ROOT/macos/ClaudeActivityWindowController.swift" ||
-   ! rg -Uq 'private func showClaudeActivity\(\) \{\n    showSettings\(\)\n    activateSettingsPage\(4\)' "$PROJECT_ROOT/macos/main.swift"; then
+   ! rg -Uq 'private func showClaudeActivity\(\) \{\n    showSettings\(\)\n    activateSettingsPage\(2\)' "$PROJECT_ROOT/macos/main.swift"; then
   echo "Claude activity must be embedded in the settings window" >&2
   exit 1
 fi
@@ -39,8 +39,8 @@ if rg -q 'ActivityJiraLogger|addWorklog|saveToJira' "$PROJECT_ROOT/macos/ClaudeA
   exit 1
 fi
 
-if ! rg -q 'activity\.events\.suffix\(50\)' "$PROJECT_ROOT/macos/ClaudeActivityWindowController.swift"; then
-  echo "Claude activity dashboard must keep its bounded event list" >&2
+if rg -q 'OSTATNIE ISTOTNE ZDARZENIA|activity\.events\.suffix' "$PROJECT_ROOT/macos/ClaudeActivityWindowController.swift"; then
+  echo "day analysis must not expose raw activity events" >&2
   exit 1
 fi
 

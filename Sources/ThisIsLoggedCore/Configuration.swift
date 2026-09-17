@@ -18,7 +18,6 @@ public struct AppSettings: Equatable, Sendable {
   public var target: JiraCredentials?
   public var targetIssue: String
   public var commentIssueKeys: Bool
-  public var synchronizationTime: String
   public var reminderTime: String
   public var workdayHours: Double
   public var claudeIntegrationEnabled: Bool
@@ -32,7 +31,6 @@ public struct AppSettings: Equatable, Sendable {
     target: JiraCredentials? = nil,
     targetIssue: String = "",
     commentIssueKeys: Bool = false,
-    synchronizationTime: String = "23:00",
     reminderTime: String = "16:00",
     workdayHours: Double = 8,
     claudeIntegrationEnabled: Bool = false,
@@ -45,7 +43,6 @@ public struct AppSettings: Equatable, Sendable {
     self.target = target
     self.targetIssue = targetIssue
     self.commentIssueKeys = commentIssueKeys
-    self.synchronizationTime = synchronizationTime
     self.reminderTime = reminderTime
     self.workdayHours = workdayHours
     self.claudeIntegrationEnabled = claudeIntegrationEnabled
@@ -68,7 +65,6 @@ public struct AppSettings: Equatable, Sendable {
             targetIssue.range(of: #"^[A-Z][A-Z0-9]*-\d+$"#, options: .regularExpression) != nil
       else { throw SettingsError.invalidTarget }
       if Self.isCloud(target.url), !target.email.contains("@") { throw SettingsError.targetEmailRequired }
-      guard Self.validClock(synchronizationTime) else { throw SettingsError.invalidSchedule }
     }
     return self
   }
@@ -139,7 +135,6 @@ public final class SettingsStore: @unchecked Sendable {
     var targetToken: String?
     var targetIssue: String
     var commentIssueKeys: Bool
-    var synchronizationTime: String
     var reminderTime: String
     var workdayHours: Double
     var claudeIntegrationEnabled: Bool?
@@ -185,7 +180,6 @@ public final class SettingsStore: @unchecked Sendable {
       target: target,
       targetIssue: stored.targetIssue,
       commentIssueKeys: stored.commentIssueKeys,
-      synchronizationTime: stored.synchronizationTime,
       reminderTime: stored.reminderTime,
       workdayHours: stored.workdayHours,
       claudeIntegrationEnabled: stored.claudeIntegrationEnabled ?? false,
@@ -207,7 +201,6 @@ public final class SettingsStore: @unchecked Sendable {
       targetToken: settings.target?.token,
       targetIssue: settings.targetIssue,
       commentIssueKeys: settings.commentIssueKeys,
-      synchronizationTime: settings.synchronizationTime,
       reminderTime: settings.reminderTime,
       workdayHours: settings.workdayHours,
       claudeIntegrationEnabled: settings.claudeIntegrationEnabled,
@@ -247,7 +240,6 @@ public final class SettingsStore: @unchecked Sendable {
       target: target,
       targetIssue: (values["DST_ISSUE"] ?? "").uppercased(),
       commentIssueKeys: values["COMMENT_KEYS"] == "1",
-      synchronizationTime: values["SYNC_TIME"] ?? "23:00",
       reminderTime: values["REMINDER_TIME"] ?? "16:00",
       workdayHours: Double((values["WORKDAY_HOURS"] ?? "8").replacingOccurrences(of: ",", with: ".")) ?? 8,
       claudeIntegrationEnabled: values["CLAUDE_ENABLED"] == "1",

@@ -49,7 +49,7 @@ Awaria albo wyłączenie synchronizacji nie blokuje odczytu raportów z Jiry gł
 1. Otwórz `This Is Logged.dmg`.
 2. Przeciągnij **This Is Logged** do **Applications**.
 3. Uruchom aplikację.
-4. Podaj dane Jiry głównej, opcjonalnie włącz drugą Jirę i wybierz **Sprawdź i zapisz**.
+4. Podaj dane Jiry głównej, opcjonalnie włącz drugą Jirę i wybierz **Zapisz**.
 
 Konfigurator sprawdza połączenia przed zapisem, zapisuje ustawienia i uzgadnia zadania `launchd`.
 Instalacja i konfiguracja nie wymagają Terminala.
@@ -64,26 +64,26 @@ dysku jako kopia zapasowa.
 
 ## Menu macOS
 
-Nagłówek pokazuje przede wszystkim dzisiejszy raport, a niżej bilans bieżącego miesiąca.
-Przed 08:00 pasek pokazuje poranny tekst; od 08:00 wyświetla wyłącznie czas zaraportowany w Jirze,
-zaczynając od `0.00 h`.
+Nagłówek pokazuje dzisiejszy raport i bilans bieżącego miesiąca. Pasek menu wyświetla zaraportowany
+czas, liczbę braków albo znak ukończenia w dzień wolny.
 
 Menu zawiera:
 
-- raport dzisiejszy, wczorajszy, tygodniowy i miesięczny;
-- konkretne daty braków i różnic z celem;
-- harmonogram przypomnienia;
-- ręczne odświeżenie;
-- ustawienia i log monitoringu;
-- przy aktywnej drugiej Jirze: harmonogram, ręczny zapis, synchronizację interaktywną i historię.
+- jedno podsumowanie stanu raportów;
+- akcję uzupełnienia raportów, gdy wykryto braki;
+- akcję wyjaśnienia synchronizacji, gdy wykryto kolizje;
+- analizę dnia, ustawienia i zakończenie aplikacji.
+
+Odświeżanie, bezpieczne uzupełnianie drugiej Jiry i aktualizacje działają automatycznie. Opcje
+techniczne, log i ręczne sprawdzenie aktualizacji są dostępne w ustawieniach.
 
 ## Powiadomienia
 
 Przypomnienie sprawdza dzisiaj oraz wcześniejsze dni robocze bieżącego miesiąca. Przy normie 8 h
 wpis 2 h wywoła komunikat `2.00/8.00 h`, a 8 h lub więcej nie wywoła alarmu.
 
-macOS wymaga zgody użytkownika i może wymagać ręcznego wyboru stylu **Stałe**. System nie pozwala
-aplikacji samodzielnie zmienić tej opcji.
+macOS prosi o zgodę dopiero po poprawnym zapisaniu pierwszej konfiguracji. Aplikacja powiadamia o
+brakach, kolizjach i awariach; udana synchronizacja pozostaje cicha.
 
 ## Opcjonalna synchronizacja
 
@@ -91,12 +91,11 @@ Automatyzacja uzupełnia dzienne sumy w jednym zadaniu docelowym. Gdy Jira docel
 niż główna, dopisuje wyłącznie brakującą różnicę. Zgodne dni pomija, a większej wartości w Jirze
 docelowej nigdy nie nadpisuje samodzielnie.
 
-Natywne okno synchronizacji pozwala wybrać dzień, bieżący lub poprzedni miesiąc, a następnie dla
-każdej kolizji wybrać:
+Natywne okno otwierane przy wykryciu różnic pokazuje wyłącznie kolizje wymagające decyzji:
 
-- **Zsumuj** — dopisz czas źródłowy do istniejącego;
-- **Pomiń** — pozostaw cel bez zmian;
-- **Nadpisz** — usuń wyłącznie własne wpisy z tego dnia i zapisz wartość źródłową.
+- **Zostaw bez zmian** — nie zmieniaj celu;
+- **Dodaj czas ze źródła** — dopisz czas źródłowy do istniejącego;
+- **Ustaw jak w głównej Jirze** — usuń wyłącznie własne wpisy z tego dnia i zapisz wartość źródłową.
 
 Każdy zapis wymaga końcowego potwierdzenia.
 
@@ -108,7 +107,8 @@ Opcję **Zbieraj aktywność z Claude Code** włącza się w ustawieniach aplika
 - rejestruje globalny serwer MCP `this-is-logged` dla wszystkich projektów użytkownika;
 - pozwala agentom odczytać wspólną aktywność i zapisać sugestię przypisania do zadania Jiry.
 
-Ekran **Aktywność Claude** w ustawieniach pokazuje dzienny podgląd sesji ze wszystkich worktree.
+Ekran **Analiza dnia** w ustawieniach pokazuje proponowany podział czasu ze wszystkich worktree,
+Jiry i Kalendarza bez ujawniania surowej listy zdarzeń.
 Pozycja w menu tray i akcja z powiadomienia otwierają bezpośrednio ten ekran. Branch lub
 treść w formacie `ABC-123` daje automatyczne przypisanie, a kolejne polecenia w tej samej sesji
 dziedziczą ostatnie pewne zadanie. Podział jest zaokrąglany globalnie do 5 minut.
@@ -123,9 +123,8 @@ W bieżącym dniu brak do czasu, który upłynął od 08:00, jest proporcjonalni
 rozpoznane zadania. Dashboard jawnie rozdziela czas wynikający ze zdarzeń od dodanej estymacji.
 Obok klucza zadania asynchronicznie pobiera jego tytuł z Jiry głównej.
 
-Niżej znajduje się oś ostatnich 50 istotnych zdarzeń z timestampami `HH:mm:ss`. Pełna liczba zdarzeń
-nadal bierze udział w obliczeniu czasu, ale nie tworzy setek kontrolek w oknie. Ten moduł działa
-wyłącznie analitycznie: nie zawiera przycisku, kodu ani narzędzia MCP zapisującego worklogi do Jiry.
+Pełna lista zdarzeń nadal bierze udział w obliczeniu czasu, ale nie jest pokazywana w interfejsie.
+Ten moduł działa wyłącznie analitycznie: nie zapisuje worklogów do Jiry.
 
 Hook tylko zapisuje sygnał w tle: nie dodaje instrukcji do rozmowy, nie uruchamia modelu i nie
 wywołuje MCP przy każdym poleceniu. Agent korzysta z MCP dopiero na jawną prośbę o analizę lub
@@ -185,7 +184,7 @@ Gotowy obraz trafia do `dist/This Is Logged.dmg`. Bez `MACOS_SIGN_IDENTITY` buil
 ad hoc i służy do testów lokalnych. Publiczna dystrybucja wymaga Developer ID i notaryzacji.
 
 Po jednorazowej instalacji wersji 2.1 kolejne wydania są sprawdzane automatycznie. Ręczne
-sprawdzenie jest dostępne w menu **Aplikacja → Sprawdź aktualizacje…**.
+sprawdzenie jest dostępne w ustawieniach.
 
 Tag `vX.Y.Z` ustawia wersję aplikacji i uruchamia workflow publikujący podpisane archiwum, DMG i
 `appcast.xml` w GitHub Releases. Numer buildu jest nadawany automatycznie. Repozytorium wymaga

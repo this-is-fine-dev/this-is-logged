@@ -192,46 +192,6 @@ import ThisIsLoggedCore
       rows.addArrangedSubview(empty)
     }
 
-    if !meetings.isEmpty {
-      rows.addArrangedSubview(section("SPOTKANIA Z KALENDARZA · \(meetings.count)"))
-      rows.addArrangedSubview(row([
-        label("Spotkanie", header: true), label("Czas", header: true), label("Godziny", header: true),
-      ], widths: [320, 60, 110]))
-      for meeting in meetings {
-        rows.addArrangedSubview(row([
-          wrappingLabel(meeting.title),
-          label(Self.duration(Int((meeting.end.timeIntervalSince(meeting.start) / 60).rounded()))),
-          label("\(Self.timeFormatter.string(from: meeting.start))–\(Self.timeFormatter.string(from: meeting.end))"),
-        ], widths: [320, 60, 110], alignment: .top))
-      }
-    }
-
-    let separator = NSBox()
-    separator.boxType = .separator
-    separator.widthAnchor.constraint(equalToConstant: 526).isActive = true
-    rows.addArrangedSubview(separator)
-    let displayedEvents = activity.events.suffix(50)
-    rows.addArrangedSubview(section("OSTATNIE ISTOTNE ZDARZENIA · \(displayedEvents.count) Z \(activity.events.count)"))
-    rows.addArrangedSubview(row([
-      label("Czas", header: true), label("Akcja", header: true),
-      label("Kontekst", header: true), label("Szczegóły", header: true),
-    ], widths: [60, 90, 100, 240]))
-    for event in displayedEvents {
-      rows.addArrangedSubview(row([
-        label(Self.timeFormatter.string(from: event.occurredAt)), label(Self.eventName(event.kind)),
-        label(event.issueKey ?? event.branch ?? "—"), label(Self.detail(event)),
-      ], widths: [60, 90, 100, 240]))
-    }
-    if activity.events.isEmpty {
-      let empty = label("Brak zdarzeń Claude Code dla tego dnia.")
-      empty.textColor = .secondaryLabelColor
-      rows.addArrangedSubview(empty)
-    } else if activity.events.count > displayedEvents.count {
-      let more = label("Starsze zdarzenia pominięto w widoku, ale nadal uwzględniono je w obliczeniu czasu.")
-      more.textColor = .secondaryLabelColor
-      rows.addArrangedSubview(more)
-    }
-
     let formatter = DateFormatter()
     formatter.locale = Locale(identifier: "pl_PL")
     formatter.dateFormat = "EEEE, d MMMM"
@@ -240,14 +200,14 @@ import ThisIsLoggedCore
     let target = Calendar.current.isDateInWeekend(datePicker.dateValue) ? 0 : Int(settings.workdayHours * 60)
     dayTotal.stringValue = "\(Self.duration(total)) / \(Self.duration(target)) h"
     dayTotal.textColor = total == target || target == 0 ? .labelColor : .systemOrange
-    let sessions = Set(activity.events.map(\.sessionID)).count
     dayStatus.textColor = calendarWarning == nil && jiraWarning == nil ? .secondaryLabelColor : .systemOrange
-    let estimate = activity.inferredMinutes > 0 ? " · +\(Self.duration(activity.inferredMinutes)) estymacji" : ""
-    let logged = activity.loggedMinutes > 0 ? " · \(Self.duration(activity.loggedMinutes)) już w Jirze" : ""
+    let estimate = activity.observedMinutes > 0 ? "\(Self.duration(activity.observedMinutes)) z aktywności" : nil
+    let logged = activity.loggedMinutes > 0 ? "\(Self.duration(activity.loggedMinutes)) już w Jirze" : nil
+    let meetingSummary = meetings.isEmpty ? nil : "\(meetings.count) spotk."
     let warnings = [calendarWarning.map { "Kalendarz: \($0)" }, jiraWarning.map { "Jira: \($0)" }]
       .compactMap { $0 }.joined(separator: " · ")
-    let warning = warnings.isEmpty ? "" : " · \(warnings)"
-    dayStatus.stringValue = "\(sessions) sesji · \(activity.events.count) zdarzeń\(logged) · \(Self.duration(activity.observedMinutes)) z aktywności\(estimate)\(warning)"
+    dayStatus.stringValue = ([logged, estimate, meetingSummary].compactMap { $0 } + (warnings.isEmpty ? [] : [warnings]))
+      .joined(separator: " · ")
     resizeDocument()
     if fetchTitles { loadTitles(for: activity.allocations.map(\.issueKey)) }
   }
@@ -363,20 +323,6 @@ import ThisIsLoggedCore
     let prefixes = ["\(issue) — ", "\(issue) – ", "\(issue) - ", "\(issue): ", "\(issue) · "]
     let summary = prefixes.first(where: title.hasPrefix).map { String(title.dropFirst($0.count)) } ?? title
     return summary.isEmpty ? issue : "\(issue) · \(summary)"
-  }
-
-  private static func eventName(_ kind: String) -> String {
-    switch kind {
-    case "UserPromptSubmit": "Wiadomość"
-    case "Stop": "Koniec odpowiedzi"
-    default: kind
-    }
-  }
-
-  private static func detail(_ event: ActivityEvent) -> String {
-    let value = event.toolName ?? event.text ?? event.cwd
-    return value.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
-      .trimmingCharacters(in: .whitespacesAndNewlines)
   }
 
   private static let timeFormatter: DateFormatter = {

@@ -75,11 +75,11 @@ Funkcja wymaga przynajmniej jednego udanego odświeżenia źródła po aktualiza
 
 `dev.this-is-fine.this-is-logged.menu` uruchamia aplikację po zalogowaniu użytkownika.
 
-## Synchronizacja interaktywna
+## Różnice do wyjaśnienia
 
-Natywne okno pokazuje źródło, cel i decyzję dla każdego dnia. Domyślnie kolizje są pomijane.
-Nadpisanie usuwa tylko worklogi zalogowanego użytkownika z wybranego dnia i zawsze wymaga
-końcowego potwierdzenia.
+Natywne okno pokazuje wyłącznie kolizje: źródło, cel i decyzję dla dnia. Domyślnie różnice są
+pozostawiane bez zmian. Ustawienie wartości jak w głównej Jirze usuwa tylko worklogi zalogowanego
+użytkownika z wybranego dnia i zawsze wymaga końcowego potwierdzenia.
 
 Kliknięcie akcji w powiadomieniu o kolizji otwiera to samo okno.
 
@@ -88,11 +88,11 @@ Kliknięcie akcji w powiadomieniu o kolizji otwiera to samo okno.
 Po włączeniu integracji aplikacja prosi macOS o dostęp, pokazuje lokalne konta kalendarzy i zapisuje
 identyfikator wybranego konta. Spotkania ze wszystkich jego kalendarzy są odczytywane tylko w godzinach
 pracy, scalane przy nakładaniu i rezerwowane dla zadania zbiorczego przed estymacją aktywności Claude.
-Ten sam wynik jest używany w oknie **Analiza czasu…** i przez narzędzie MCP `review_day`.
+Ten sam wynik jest używany w oknie **Analiza dnia…** i przez narzędzie MCP `review_day`.
 
 ## Powiadomienia
 
-Jeśli komunikat znika automatycznie:
+Zgoda jest wyświetlana po zapisaniu pierwszej poprawnej konfiguracji. Jeśli komunikat znika automatycznie:
 
 1. otwórz **Ustawienia systemowe → Powiadomienia → This Is Logged**;
 2. włącz powiadomienia;

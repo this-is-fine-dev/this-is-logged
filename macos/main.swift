@@ -17,8 +17,6 @@ private let environment = ProcessInfo.processInfo.environment
 private let reportStatusURL = URL(fileURLWithPath: environment["THIS_IS_LOGGED_STATUS"]
   ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/this-is-logged/status.json").path)
 private let iconURL = Bundle.main.url(forResource: "AppIcon", withExtension: "png")
-private let syncLabel = "dev.this-is-fine.this-is-logged.sync"
-private let reminderLabel = "dev.this-is-fine.this-is-logged.reminder"
 private let statusLabel = "dev.this-is-fine.this-is-logged.status"
 private let configURL: URL = {
   if let configured = environment["THIS_IS_LOGGED_ENV"] { return URL(fileURLWithPath: configured) }
@@ -83,7 +81,7 @@ private func registerNotificationCategories(_ center: UNUserNotificationCenter) 
   ])
 }
 
-private func deliverNotification(_ body: String, category: String? = nil) -> Bool {
+private func deliverNotification(_ body: String, category: String? = nil, identifier: String = UUID().uuidString) -> Bool {
   let center = UNUserNotificationCenter.current()
   registerNotificationCategories(center)
   let done = DispatchSemaphore(value: 0)
@@ -100,7 +98,8 @@ private func deliverNotification(_ body: String, category: String? = nil) -> Boo
     content.body = body
     content.sound = .default
     if let category { content.categoryIdentifier = category }
-    center.add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)) { error in
+    center.removeDeliveredNotifications(withIdentifiers: [identifier])
+    center.add(UNNotificationRequest(identifier: identifier, content: content, trigger: nil)) { error in
       if let error { fputs("notification delivery: \(error)\n", stderr) }
       delivered.value = error == nil
       done.signal()
@@ -120,25 +119,13 @@ private func persistentNotificationsEnabled() -> Bool {
   return done.wait(timeout: .now() + 15) == .success && enabled.value
 }
 
-private struct Run {
-  let date: Date
-  var hours: Double?
-  var collisions = 0
-  var error: String?
-}
-
 private struct ReportStatus: Decodable {
-  let backend: String?
   let checkedAt: String
   let lastSuccessfulAt: String?
-  let syncEnabled: Bool?
-  let seconds: Int?
   let expectedSeconds: Int?
   let error: String?
   let targetError: String?
   let today: PeriodStatus?
-  let yesterday: PeriodStatus?
-  let week: PeriodStatus?
   let month: PeriodStatus?
   let monthCapacity: MonthCapacity?
 }
@@ -158,11 +145,7 @@ private struct MissingDay: Decodable {
   let sourceSeconds: Int
 }
 
-private struct Difference: Decodable {
-  let date: String
-  let sourceSeconds: Int
-  let targetSeconds: Int
-}
+private struct Difference: Decodable {}
 
 private struct MonthCapacity: Decodable {
   let workingDays: Int
@@ -184,30 +167,6 @@ private func dayLabel(_ day: LocalDay) -> String {
   return value.prefix(1).uppercased(with: formatter.locale) + value.dropFirst()
 }
 
-private func parseLog(_ text: String) -> [Run] {
-  let iso = ISO8601DateFormatter()
-  iso.formatOptions.insert(.withFractionalSeconds)
-  var runs: [Run] = []
-  var current: Run?
-
-  for part in text.split(separator: "\n", omittingEmptySubsequences: false) {
-    let line = String(part)
-    if line.hasPrefix("--- "), line.hasSuffix(" ---"),
-       let date = iso.date(from: String(line.dropFirst(4).dropLast(4))) {
-      if let current { runs.append(current) }
-      current = Run(date: date)
-    } else if line.contains("KOLIZJA:") {
-      current?.collisions += 1
-    } else if line.hasPrefix("niepowodzenie: ") {
-      current?.error = String(line.dropFirst("niepowodzenie: ".count))
-    } else if line.hasPrefix("zapisano: ") {
-      current?.hours = Double(line.dropFirst(10).prefix { $0.isNumber || $0 == "." })
-    }
-  }
-  if let current { runs.append(current) }
-  return runs
-}
-
 private func clockParts(_ value: String) -> (hour: Int, minute: Int)? {
   let parts = value.split(separator: ":", omittingEmptySubsequences: false)
   guard parts.count == 2, parts[0].count == 2, parts[1].count == 2,
@@ -223,19 +182,9 @@ private func menuIcon() -> NSImage? {
   return image
 }
 
-private let weekendMessages = ["nadgodzinki?", "nie tyraj tyle", "jebać biedę?", "samo się nie zrobi"]
-private let morningMessages = ["daj pospać", "Jira też śpi", "najpierw kawusia", "od ósmej, szefie"]
-
-private func weekendMessage(day: Int) -> String { weekendMessages[day % weekendMessages.count] }
-private func noDataMessage(day: Int, hour: Int, missingDays: Int) -> String {
-  if missingDays > 0 { return " braki: \(missingDays)" }
-  if hour < 8 { return " \(morningMessages[day % morningMessages.count])" }
-  return " 0.00 h"
-}
-
-private func statusBarTitle(seconds: Int, weekendText: String?, missingDays: Int, day: Int, hour: Int) -> String {
-  if let weekendText { return missingDays == 0 ? " \(weekendText)" : " braki: \(missingDays)" }
-  if seconds == 0 { return noDataMessage(day: day, hour: hour, missingDays: missingDays) }
+private func statusBarTitle(seconds: Int, weekend: Bool, missingDays: Int) -> String {
+  if missingDays > 0 { return " Braki: \(missingDays)" }
+  if weekend { return " ✓" }
   return " \(nativeHours(seconds)) h"
 }
 
@@ -257,19 +206,6 @@ private func completedPeriod(_ period: PeriodStatus?, including day: PeriodStatu
   )
 }
 
-private func weekdayLabel(_ value: String) -> String {
-  guard let day = LocalDay(value) else { return "Ostatni dzień pracy" }
-  let formatter = DateFormatter()
-  formatter.locale = Locale(identifier: "pl_PL")
-  formatter.dateFormat = "EEEE"
-  return formatter.string(from: day.date).capitalized(with: formatter.locale)
-}
-
-private func previousDayLabel(_ value: String, now: Date) -> String {
-  guard let day = LocalDay(value) else { return "Ostatni dzień pracy" }
-  return day == LocalDay(now).adding(days: -1) ? "Wczoraj" : weekdayLabel(value)
-}
-
 private func savedSetting(_ key: String, fallback: String) -> String {
   if arguments.contains(where: { $0.contains("selfcheck") }) { return fallback }
   return readSettings()[key] ?? fallback
@@ -287,7 +223,6 @@ private func readSettings() -> [String: String] {
       "DST_TOKEN": settings.target?.token ?? "",
       "DST_ISSUE": settings.targetIssue,
       "COMMENT_KEYS": settings.commentIssueKeys ? "1" : "0",
-      "SYNC_TIME": settings.synchronizationTime,
       "REMINDER_TIME": settings.reminderTime,
       "WORKDAY_HOURS": String(settings.workdayHours),
       "CLAUDE_ENABLED": settings.claudeIntegrationEnabled ? "1" : "0",
@@ -317,16 +252,9 @@ private func configurationComplete(_ values: [String: String]) -> Bool {
   return values["SYNC_ENABLED"] != "1" || ["DST_URL", "DST_TOKEN", "DST_ISSUE"].allSatisfy { !values[$0, default: ""].isEmpty }
 }
 
-private func period(monthOffset: Int = 0) -> String {
-  let date = Calendar.current.date(byAdding: .month, value: monthOffset, to: Date()) ?? Date()
+private func period() -> String {
   let formatter = DateFormatter()
   formatter.dateFormat = "yyyy-MM"
-  return formatter.string(from: date)
-}
-
-private func todayPeriod() -> String {
-  let formatter = DateFormatter()
-  formatter.dateFormat = "yyyy-MM-dd"
   return formatter.string(from: Date())
 }
 
@@ -343,14 +271,9 @@ private func todayPeriod() -> String {
   private let headerMonthDetail = NSTextField(labelWithString: "Czekam na dane")
   private let headerTodayLabel = NSTextField(labelWithString: "DZISIAJ")
   private let headerTodayValue = NSTextField(labelWithString: "—")
-  private let lastSyncStatus = NSMenuItem(title: "", action: nil, keyEquivalent: "")
-  private let todayStatus = NSMenuItem(title: "", action: nil, keyEquivalent: "")
-  private let yesterdayStatus = NSMenuItem(title: "", action: nil, keyEquivalent: "")
-  private let weekStatus = NSMenuItem(title: "", action: nil, keyEquivalent: "")
-  private let monthStatus = NSMenuItem(title: "", action: nil, keyEquivalent: "")
-  private let reminderSchedule = NSMenuItem(title: "", action: nil, keyEquivalent: "")
-  private let syncSchedule = NSMenuItem(title: "", action: nil, keyEquivalent: "")
-  private let historyMenu = NSMenu()
+  private let reportSummary = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+  private let connectionWarning = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+  private lazy var collisionAction = actionItem("Wyjaśnij różnice…", #selector(resolveCollisions), "")
   private let sourceURLField = NSTextField(frame: .zero)
   private let sourceEmailField = NSTextField(frame: .zero)
   private let sourceTokenField = NSSecureTextField(frame: .zero)
@@ -372,6 +295,7 @@ private func todayPeriod() -> String {
   private let settingsTabView = NSTabView(frame: .zero)
   private var settingsSidebarButtons: [NSButton] = []
   private var targetBox: NSView!
+  private var analysisAssignmentBox: NSView!
   private var saveButton: NSButton!
   private var panel: NSPanel!
   private var syncWindow: SyncWindowController?
@@ -391,7 +315,6 @@ private func todayPeriod() -> String {
     let center = UNUserNotificationCenter.current()
     center.delegate = self
     registerNotificationCategories(center)
-    center.requestAuthorization(options: [.alert, .sound]) { _, _ in }
     setupMenu()
     setupSettingsPanel()
     refresh()
@@ -409,61 +332,21 @@ private func todayPeriod() -> String {
     let menu = item.menu ?? NSMenu()
     menu.removeAllItems()
     menu.delegate = self
-    menu.minimumWidth = 410
+    menu.minimumWidth = 390
     menu.addItem(makeHeader())
     menu.addItem(.separator())
-    menu.addItem(sectionItem("RAPORTY"))
-    for line in [todayStatus, yesterdayStatus, weekStatus, monthStatus] {
-      line.submenu = NSMenu()
-      menu.addItem(line)
-    }
-    menu.addItem(.separator())
-    menu.addItem(sectionItem("MONITORING"))
-    reminderSchedule.isEnabled = false
-    menu.addItem(reminderSchedule)
-    menu.addItem(actionItem("Odśwież dane", #selector(refreshReports), ""))
-
-    if configuredSyncEnabled {
-      menu.addItem(.separator())
-      menu.addItem(sectionItem("SYNCHRONIZACJA"))
-      lastSyncStatus.isEnabled = false
-      menu.addItem(lastSyncStatus)
-      syncSchedule.isEnabled = false
-      menu.addItem(syncSchedule)
-      menu.addItem(actionItem("Synchronizuj teraz", #selector(runNow), "r"))
-
-      let interactive = NSMenu()
-      for (title, value) in [
-        (Calendar.current.isDateInWeekend(Date()) ? "Dzisiaj (dzień wolny)…" : "Dzisiaj…", todayPeriod()),
-        ("Bieżący miesiąc…", period()),
-        ("Poprzedni miesiąc…", period(monthOffset: -1)),
-      ] {
-        let option = actionItem(title, #selector(runInteractive(_:)), "")
-        option.representedObject = value
-        interactive.addItem(option)
-      }
-      let interactiveItem = NSMenuItem(title: "Synchronizacja interaktywna", action: nil, keyEquivalent: "")
-      interactiveItem.submenu = interactive
-      menu.addItem(interactiveItem)
-      let historyItem = NSMenuItem(title: "Ostatnie synchronizacje", action: nil, keyEquivalent: "")
-      historyItem.submenu = historyMenu
-      menu.addItem(historyItem)
-    }
-
-    menu.addItem(.separator())
-    menu.addItem(sectionItem("APLIKACJA"))
+    reportSummary.isEnabled = false
+    reportSummary.title = "Czekam na dane z Jiry"
+    menu.addItem(reportSummary)
+    connectionWarning.isEnabled = false
+    connectionWarning.isHidden = true
+    menu.addItem(connectionWarning)
+    collisionAction.isHidden = true
+    menu.addItem(collisionAction)
     if configuredClaudeEnabled || configuredCalendarEnabled {
-      menu.addItem(actionItem("Aktywność Claude…", #selector(showClaudeActivity), ""))
+      menu.addItem(actionItem("Analiza dnia…", #selector(showClaudeActivity), ""))
     }
-    menu.addItem(actionItem("Ustawienia i połączenia…", #selector(showSettings), ","))
-    let updateItem = NSMenuItem(
-      title: "Sprawdź aktualizacje…",
-      action: #selector(checkForUpdates(_:)),
-      keyEquivalent: ""
-    )
-    updateItem.target = self
-    menu.addItem(updateItem)
-    menu.addItem(actionItem(configuredSyncEnabled ? "Otwórz log synchronizacji" : "Otwórz log monitoringu", #selector(openLog), "l"))
+    menu.addItem(actionItem("Ustawienia…", #selector(showSettings), ","))
     menu.addItem(.separator())
     menu.addItem(actionItem("Zakończ", #selector(quit), "q"))
     item.menu = menu
@@ -472,7 +355,7 @@ private func todayPeriod() -> String {
   }
 
   private func makeHeader() -> NSMenuItem {
-    let view = NSView(frame: NSRect(x: 0, y: 0, width: 410, height: 96))
+    let view = NSView(frame: NSRect(x: 0, y: 0, width: 390, height: 96))
     headerMonthLabel.font = .systemFont(ofSize: 10, weight: .semibold)
     headerMonthLabel.textColor = .secondaryLabelColor
     headerMonthValue.font = .monospacedDigitSystemFont(ofSize: 13, weight: .semibold)
@@ -501,16 +384,6 @@ private func todayPeriod() -> String {
     ])
     let menuItem = NSMenuItem()
     menuItem.view = view
-    return menuItem
-  }
-
-  private func sectionItem(_ title: String) -> NSMenuItem {
-    let menuItem = NSMenuItem()
-    menuItem.attributedTitle = NSAttributedString(string: title, attributes: [
-      .font: NSFont.systemFont(ofSize: 10, weight: .semibold),
-      .foregroundColor: NSColor.secondaryLabelColor,
-    ])
-    menuItem.isEnabled = false
     return menuItem
   }
 
@@ -569,17 +442,21 @@ private func todayPeriod() -> String {
     sidebarStack.addArrangedSubview(brand)
     sidebarStack.setCustomSpacing(22, after: brand)
     for (index, item) in [
-      ("Jira główna", "link"),
-      ("Synchronizacja", "arrow.triangle.2.circlepath"),
-      ("Monitoring", "clock"),
-      ("Analiza czasu", "chart.bar.xaxis"),
-      ("Aktywność Claude", "text.justify.left"),
-      ("O aplikacji", "info.circle"),
+      ("Połączenia", "link"),
+      ("Automatyzacja", "gearshape.2"),
+      ("Analiza dnia", "chart.bar.xaxis"),
     ].enumerated() {
       let button = settingsSidebarButton(title: item.0, symbol: item.1, tag: index)
       settingsSidebarButtons.append(button)
       sidebarStack.addArrangedSubview(button)
     }
+    let updateButton = NSButton(title: "Sprawdź aktualizacje…", target: self, action: #selector(checkForUpdates(_:)))
+    updateButton.bezelStyle = .inline
+    let logButton = NSButton(title: "Otwórz log techniczny", target: self, action: #selector(openLog))
+    logButton.bezelStyle = .inline
+    sidebarStack.setCustomSpacing(18, after: settingsSidebarButtons.last!)
+    sidebarStack.addArrangedSubview(updateButton)
+    sidebarStack.addArrangedSubview(logButton)
     sidebar.addSubview(sidebarStack)
 
     let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"
@@ -661,48 +538,39 @@ private func todayPeriod() -> String {
     claudeDescription.widthAnchor.constraint(equalToConstant: 300).isActive = true
     calendarToggle.target = self
     calendarToggle.action = #selector(toggleCalendar)
+    claudeToggle.target = self
+    claudeToggle.action = #selector(toggleClaude)
     calendarPopup.widthAnchor.constraint(equalToConstant: 300).isActive = true
 
-    addSettingsPage(title: "Jira główna", views: [
+    addSettingsPage(title: "Połączenia", views: [
       settingsSection("POŁĄCZENIE", [
         ("Adres", sourceURLField), ("Email", sourceEmailField), ("Token API", sourceTokenField),
       ]),
       settingsNote("To jest główne źródło raportów. Monitoring działa niezależnie od opcjonalnej synchronizacji."),
-    ])
-    addSettingsPage(title: "Synchronizacja", views: [
       settingsSection("SYNCHRONIZACJA", [("Kopiuj do drugiej Jiry", syncToggle)]),
       targetBox,
     ])
-    addSettingsPage(title: "Monitoring", views: [
+    analysisAssignmentBox = settingsSection("PRZYPISANIE", [
+      ("Zadanie zbiorcze", catchAllIssueField), ("Zasada", claudeDescription),
+    ])
+    addSettingsPage(title: "Automatyzacja", views: [
       settingsSection("HARMONOGRAM", [
         ("Przypomnienie", reminderTimeField), ("Pełny dzień", hoursControl),
       ]),
-      settingsNote("Dane z Jiry są sprawdzane co minutę. Przypomnienie obejmuje także wcześniejsze braki w miesiącu."),
-    ])
-    addSettingsPage(title: "Analiza czasu", views: [
       settingsSection("CLAUDE CODE", [("Zbieraj aktywność", claudeToggle)]),
       settingsSection("KALENDARZ", [
         ("Uwzględniaj spotkania", calendarToggle), ("Konto", calendarPopup),
       ]),
-      settingsSection("PRZYPISANIE", [
-        ("Zadanie zbiorcze", catchAllIssueField), ("Zasada", claudeDescription),
-      ]),
+      analysisAssignmentBox,
+      settingsNote("Kontrola działa automatycznie. Powiadomienie pojawia się tylko wtedy, gdy wymaga Twojej uwagi."),
     ])
 
     let activityController = ClaudeActivityViewController(settings: try? SettingsStore().load())
     self.activityController = activityController
-    let activityItem = NSTabViewItem(identifier: "Aktywność Claude")
-    activityItem.label = "Aktywność Claude"
+    let activityItem = NSTabViewItem(identifier: "Analiza dnia")
+    activityItem.label = "Analiza dnia"
     activityItem.view = activityController.view
     settingsTabView.addTabViewItem(activityItem)
-
-    let aboutVersion = NSTextField(labelWithString: version)
-    aboutVersion.font = .monospacedDigitSystemFont(ofSize: 13, weight: .medium)
-    let updateButton = NSButton(title: "Sprawdź aktualizacje…", target: self, action: #selector(checkForUpdates(_:)))
-    addSettingsPage(title: "O aplikacji", views: [
-      settingsSection("THIS IS LOGGED", [("Wersja", aboutVersion), ("Aktualizacje", updateButton)]),
-      settingsNote("Your worklogs are fine. Probably."),
-    ])
 
     settingsFeedback.textColor = .secondaryLabelColor
     settingsFeedback.lineBreakMode = .byWordWrapping
@@ -710,7 +578,7 @@ private func todayPeriod() -> String {
     settingsProgress.style = .spinning
     settingsProgress.controlSize = .small
     settingsProgress.isDisplayedWhenStopped = false
-    saveButton = NSButton(title: "Sprawdź i zapisz", target: self, action: #selector(saveSettings))
+    saveButton = NSButton(title: "Zapisz", target: self, action: #selector(saveSettings))
     saveButton.keyEquivalent = "\r"
     let footerContent = NSStackView(views: [settingsProgress, settingsFeedback, NSView(), saveButton])
     footerContent.orientation = .horizontal
@@ -729,6 +597,7 @@ private func todayPeriod() -> String {
     calendarToggle.state = configuredCalendarEnabled ? .on : .off
     populateCalendarSources(selected: savedSetting("CALENDAR_ID", fallback: ""))
     toggleSynchronization()
+    toggleAnalysisFeatures()
     activateSettingsPage(0)
   }
 
@@ -758,7 +627,7 @@ private func todayPeriod() -> String {
 
   private func activateSettingsPage(_ index: Int) {
     settingsTabView.selectTabViewItem(at: index)
-    if index == 4 { activityController?.refresh() }
+    if index == 2 { activityController?.refresh() }
     for button in settingsSidebarButtons {
       let selected = button.tag == index
       button.layer?.backgroundColor = selected ? NSColor.controlAccentColor.cgColor : NSColor.clear.cgColor
@@ -855,20 +724,29 @@ private func todayPeriod() -> String {
     targetBox.isHidden = syncToggle.state != .on
   }
 
+  @objc private func toggleClaude() { toggleAnalysisFeatures() }
+
+  private func toggleAnalysisFeatures() {
+    analysisAssignmentBox.isHidden = claudeToggle.state != .on && calendarToggle.state != .on
+  }
+
   @objc private func toggleCalendar() {
     guard calendarToggle.state == .on else {
       calendarPopup.isEnabled = false
+      toggleAnalysisFeatures()
       return
     }
     Task {
       do {
         guard try await CalendarIntegration.requestAccess() else { throw CalendarIntegrationError.accessDenied }
         populateCalendarSources(selected: calendarPopup.selectedItem?.representedObject as? String ?? "")
+        toggleAnalysisFeatures()
         settingsFeedback.textColor = .secondaryLabelColor
         settingsFeedback.stringValue = "Wybierz konto z kalendarzami służbowymi i zapisz ustawienia."
       } catch {
         calendarToggle.state = .off
         calendarPopup.isEnabled = false
+        toggleAnalysisFeatures()
         settingsFeedback.textColor = .systemRed
         settingsFeedback.stringValue = error.localizedDescription
       }
@@ -919,30 +797,7 @@ private func todayPeriod() -> String {
   }
 
   private func refresh() {
-    let text = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
-    let runs = configuredSyncEnabled ? parseLog(text) : []
     var icon = "clock"
-
-    if configuredSyncEnabled, let last = runs.last {
-      let formatter = DateFormatter()
-      formatter.dateFormat = "dd.MM, HH:mm"
-      if last.error != nil {
-        lastSyncStatus.title = "Ostatnia synchronizacja nie powiodła się"
-        icon = "exclamationmark.triangle"
-      } else if let hours = last.hours {
-        lastSyncStatus.title = "Ostatni zapis \(formatter.string(from: last.date)) · \(format(hours))"
-        icon = "clock.badge.checkmark"
-      } else if Date().timeIntervalSince(last.date) < 600 {
-        lastSyncStatus.title = "Synchronizacja trwa…"
-        icon = "arrow.triangle.2.circlepath"
-      } else {
-        lastSyncStatus.title = "Ostatnia synchronizacja nie powiodła się"
-        icon = "exclamationmark.triangle"
-      }
-    } else if configuredSyncEnabled {
-      lastSyncStatus.title = "Synchronizacja nie była jeszcze uruchamiana"
-    }
-
     let status = try? JSONDecoder().decode(ReportStatus.self, from: Data(contentsOf: reportStatusURL))
     let now = Date()
     let statusIsStale = status.flatMap { isoDate($0.checkedAt) }.map { now.timeIntervalSince($0) >= 55 } ?? true
@@ -950,99 +805,48 @@ private func todayPeriod() -> String {
       lastStatusKick = now
       runAgent(statusLabel)
     }
-    let showTarget = status?.syncEnabled ?? configuredSyncEnabled
     let isWeekend = Calendar.current.isDateInWeekend(now)
     let currentDay = LocalDay(now)
-    let currentClock = Calendar.current.dateComponents([.hour], from: now)
-    let currentHour = currentClock.hour ?? 0
     let today = currentToday(status, on: currentDay)
     let cachedDayIsClosed = status?.today.map { $0.to < currentDay.description } ?? false
-    let weekendText = isWeekend ? weekendMessage(day: Calendar.current.component(.day, from: now)) : nil
-    let completedWeek = completedPeriod(status?.week, including: status?.today, includeDay: isWeekend || cachedDayIsClosed)
     let month = status?.month.flatMap { $0.from.hasPrefix(currentDay.monthID) ? $0 : nil }
     let monthDay = status?.today.flatMap { $0.from.hasPrefix(currentDay.monthID) ? $0 : nil }
     let completedMonth = completedPeriod(month, including: monthDay, includeDay: isWeekend || cachedDayIsClosed)
     let missingDays = completedMonth?.missing.count ?? 0
-    renderHeader(status, today: today, month: completedMonth, weekendText: weekendText, missingDays: missingDays)
-    if let status, let today, let checked = isoDate(status.lastSuccessfulAt ?? status.checkedAt) {
-      let formatter = DateFormatter()
-      formatter.dateFormat = "HH:mm"
-      let expected = status.expectedSeconds ?? Int((Double(configuredWorkdayHours) ?? 8) * 3600)
-      if isWeekend, let period = completedMonth {
-        renderPeriod(todayStatus, label: "Weekend", value: period, expected: expected, showTarget: showTarget)
-        todayStatus.title = missingDays == 0 ? "Weekend · raporty kompletne" : "Weekend · braki: \(missingDays)"
-        if status.error != nil { todayStatus.title += " · offline · dane \(formatter.string(from: checked))" }
-        let lastWorkday = [status.today, status.yesterday].compactMap { $0 }.filter { $0.workingDays > 0 }.max { $0.to < $1.to }
-        if let lastWorkday {
-          renderPeriod(yesterdayStatus, label: weekdayLabel(lastWorkday.to), value: lastWorkday, expected: expected, showTarget: showTarget)
-        } else {
-          setWaiting(yesterdayStatus, label: "Ostatni dzień pracy")
-        }
-      } else {
-        renderPeriod(todayStatus, label: dayLabel(currentDay), value: today, expected: expected, showTarget: showTarget)
-        todayStatus.title += status.error == nil
-          ? " · \(formatter.string(from: checked))"
-          : " · offline · dane \(formatter.string(from: checked))"
-        if let yesterday = status.yesterday {
-          renderPeriod(yesterdayStatus, label: previousDayLabel(yesterday.to, now: now), value: yesterday, expected: expected, showTarget: showTarget)
-        } else {
-          setWaiting(yesterdayStatus, label: "Poprzedni dzień pracy")
-        }
-      }
-      item.button?.title = statusBarTitle(
-        seconds: today.sourceSeconds,
-        weekendText: weekendText,
-        missingDays: missingDays,
-        day: currentDay.day,
-        hour: currentHour
-      )
-      if let week = completedWeek {
-        renderPeriod(weekStatus, label: "Tydzień", value: week, expected: expected, showTarget: showTarget)
-      } else {
-        setWaiting(weekStatus, label: "Tydzień")
-      }
-      if let month = completedMonth {
-        renderPeriod(monthStatus, label: "Miesiąc", value: month, expected: expected, showTarget: showTarget)
-      } else {
-        setWaiting(monthStatus, label: "Miesiąc")
-      }
-    } else if let status, let checked = isoDate(status.lastSuccessfulAt ?? status.checkedAt) {
-      let formatter = DateFormatter()
-      formatter.dateFormat = "dd.MM, HH:mm"
-      let expected = status.expectedSeconds ?? Int((Double(configuredWorkdayHours) ?? 8) * 3600)
-      todayStatus.title = "\(dayLabel(currentDay)) · brak dzisiejszych danych"
-      let staleDetail = status.error == nil ? "Ostatni odczyt: " : "Offline · ostatni udany odczyt: "
-      setDetails(todayStatus, [staleDetail + formatter.string(from: checked)])
-      if let lastWorkday = [status.today, status.yesterday].compactMap({ $0 }).filter({ $0.workingDays > 0 && $0.to < currentDay.description }).max(by: { $0.to < $1.to }) {
-        renderPeriod(yesterdayStatus, label: weekdayLabel(lastWorkday.to), value: lastWorkday, expected: expected, showTarget: showTarget)
-      } else {
-        setWaiting(yesterdayStatus, label: "Poprzedni dzień pracy")
-      }
-      if let week = completedWeek {
-        renderPeriod(weekStatus, label: "Tydzień do \(shortDate(week.to))", value: week, expected: expected, showTarget: showTarget)
-      } else {
-        setWaiting(weekStatus, label: "Tydzień")
-      }
-      if let month = completedMonth {
-        renderPeriod(monthStatus, label: "Miesiąc do \(shortDate(month.to))", value: month, expected: expected, showTarget: showTarget)
-      } else {
-        setWaiting(monthStatus, label: "Miesiąc")
-      }
-      item.button?.title = noDataMessage(day: currentDay.day, hour: currentHour, missingDays: missingDays)
+    renderHeader(status, today: today, month: completedMonth, weekendText: isWeekend ? "Dzień wolny" : nil, missingDays: missingDays)
+
+    reportSummary.submenu = NSMenu()
+    if let completedMonth, missingDays > 0 {
+      reportSummary.title = "Uzupełnij brakujące raporty · \(missingDays)"
+      let expected = status?.expectedSeconds ?? Int((Double(configuredWorkdayHours) ?? 8) * 3600)
+      setDetails(reportSummary, completedMonth.missing.map {
+        "\(shortDate($0.date)) · brakuje \(formatSeconds(max(0, expected - $0.sourceSeconds))) h"
+      })
+      icon = "exclamationmark.circle"
+    } else if status != nil {
+      reportSummary.title = "Wszystkie raporty są uzupełnione"
+      setDetails(reportSummary, ["Monitoring i synchronizacja działają automatycznie."])
     } else {
-      todayStatus.title = "\(dayLabel(currentDay)) · czekam na dane"
-      setDetails(todayStatus, ["Czekam na pierwszy odczyt z Jiry."])
-      for (line, label) in [(yesterdayStatus, "Poprzedni dzień pracy"), (weekStatus, "Tydzień"), (monthStatus, "Miesiąc")] {
-        setWaiting(line, label: label)
-      }
-      item.button?.title = noDataMessage(day: currentDay.day, hour: currentHour, missingDays: missingDays)
+      reportSummary.title = "Czekam na pierwsze dane z Jiry"
+      setDetails(reportSummary, ["Po połączeniu dane odświeżą się automatycznie."])
     }
-    reminderSchedule.title = isWeekend ? "Przypomnienia wrócą w poniedziałek" : "Przypomnienie \(configuredReminderTime)"
-    if configuredSyncEnabled {
-      syncSchedule.title = "Automatyczny zapis co 5 minut"
-      renderHistory(runs)
+
+    let formatter = DateFormatter()
+    formatter.dateFormat = "HH:mm"
+    let warning = status?.error ?? status?.targetError
+    connectionWarning.isHidden = warning == nil
+    if warning != nil {
+      let checked = status.flatMap { isoDate($0.lastSuccessfulAt ?? $0.checkedAt) }
+      connectionWarning.title = checked.map { "Jira niedostępna · dane z \(formatter.string(from: $0))" } ?? "Jira niedostępna"
+      icon = "exclamationmark.triangle"
     }
-    if let image = normalMenuIcon {
+
+    let differences = (completedMonth?.differences ?? []) + ((isWeekend || cachedDayIsClosed) ? [] : (today?.differences ?? []))
+    collisionAction.isHidden = !configuredSyncEnabled || differences.isEmpty
+    collisionAction.title = "Wyjaśnij różnice synchronizacji · \(differences.count)…"
+    if !differences.isEmpty { icon = "exclamationmark.triangle" }
+    item.button?.title = statusBarTitle(seconds: today?.sourceSeconds ?? 0, weekend: isWeekend, missingDays: missingDays)
+    if icon == "clock", let image = normalMenuIcon {
       item.button?.image = image
     } else {
       item.button?.image = NSImage(systemSymbolName: icon, accessibilityDescription: "This Is Logged")
@@ -1098,52 +902,6 @@ private func todayPeriod() -> String {
     return value.missing.isEmpty ? "Zamknięte dni kompletne" : "Braki w zamkniętych dniach: \(value.missing.count)"
   }
 
-  private func renderPeriod(_ item: NSMenuItem, label: String, value: PeriodStatus, expected: Int, showTarget: Bool) {
-    if value.from > value.to {
-      item.title = "\(label) · brak zakończonych dni"
-      setDetails(item, ["Kontrola rozpocznie się po zakończeniu pierwszego dnia miesiąca."])
-      return
-    }
-    let expectedTotal = value.workingDays * expected
-    let report = value.missing.isEmpty ? "raport: OK" : "raport: braki"
-    let target = showTarget
-      ? " · " + (value.differences.map { $0.isEmpty ? "cel: OK" : "cel: różnice \($0.count)" } ?? "cel: brak danych")
-      : ""
-    item.title = value.workingDays == 0
-      ? "\(label) · dzień wolny\(target)"
-      : "\(label) · \(formatSeconds(value.sourceSeconds))/\(formatSeconds(expectedTotal)) h · \(report)\(target)"
-
-    var details = ["Zakres: \(shortDate(value.from))–\(shortDate(value.to))"]
-    if value.workingDays == 0 {
-      details.append(value.sourceSeconds == 0
-        ? "Raport: dzień wolny, bez wpisów"
-        : "Raport: dzień wolny, zaraportowano \(formatSeconds(value.sourceSeconds)) h")
-    } else if value.missing.isEmpty {
-      details.append("Raport: wszystkie dni uzupełnione")
-    } else {
-      details += value.missing.map {
-        "Raport \(shortDate($0.date)): \(formatSeconds($0.sourceSeconds))/\(formatSeconds(expected)) h · brakuje \(formatSeconds(max(0, expected - $0.sourceSeconds))) h"
-      }
-    }
-    if showTarget {
-      if let differences = value.differences {
-        details.append(contentsOf: differences.isEmpty
-          ? ["Cel: zgodny z Jirą główną"]
-          : differences.map {
-              "Cel \(shortDate($0.date)): Jira główna \(formatSeconds($0.sourceSeconds)) h · cel \(formatSeconds($0.targetSeconds)) h"
-            })
-      } else {
-        details.append("Cel: nie udało się sprawdzić połączenia")
-      }
-    }
-    setDetails(item, details)
-  }
-
-  private func setWaiting(_ item: NSMenuItem, label: String) {
-    item.title = "\(label) · odświeżam dane…"
-    setDetails(item, [configuredSyncEnabled ? "Czekam na odczyt obu instancji Jiry." : "Czekam na odczyt Jiry."])
-  }
-
   private func setDetails(_ item: NSMenuItem, _ titles: [String]) {
     item.submenu?.removeAllItems()
     for title in titles {
@@ -1159,26 +917,6 @@ private func todayPeriod() -> String {
     let parts = value.split(separator: "-")
     return parts.count == 3 ? "\(parts[2]).\(parts[1])" : value
   }
-
-  private func renderHistory(_ runs: [Run]) {
-    let formatter = DateFormatter()
-    formatter.dateFormat = "dd.MM HH:mm"
-    historyMenu.removeAllItems()
-    for run in runs.suffix(5).reversed() {
-      let result = run.error != nil ? "BŁĄD" : run.hours.map { format($0) } ?? "nieukończona"
-      let collision = run.collisions > 0 ? " · różnice: \(run.collisions)" : ""
-      let entry = NSMenuItem(title: "\(formatter.string(from: run.date)) · \(result)\(collision)", action: nil, keyEquivalent: "")
-      entry.isEnabled = false
-      historyMenu.addItem(entry)
-    }
-    if runs.isEmpty {
-      let empty = NSMenuItem(title: "Brak zapisanych uruchomień", action: nil, keyEquivalent: "")
-      empty.isEnabled = false
-      historyMenu.addItem(empty)
-    }
-  }
-
-  private func format(_ hours: Double) -> String { String(format: "%.2f h", hours) }
 
   private func isoDate(_ value: String) -> Date? {
     let formatter = ISO8601DateFormatter()
@@ -1225,13 +963,8 @@ private func todayPeriod() -> String {
     return true
   }
 
-  @objc private func runNow() {
-    lastSyncStatus.title = "Uruchamiam synchronizację…"
-    runAgent(syncLabel)
-  }
-
   @objc private func refreshReports() {
-    todayStatus.title = Calendar.current.isDateInWeekend(Date()) ? "Weekend · odświeżam…" : "Dzisiaj · odświeżam…"
+    reportSummary.title = "Odświeżam dane…"
     runAgent(statusLabel, restart: true)
   }
 
@@ -1243,14 +976,15 @@ private func todayPeriod() -> String {
       do {
         try Self.command(arguments)
       } catch {
-        await MainActor.run { self?.lastSyncStatus.title = "Nie udało się uruchomić zadania launchd" }
+        await MainActor.run {
+          self?.connectionWarning.isHidden = false
+          self?.connectionWarning.title = "Nie udało się uruchomić automatyzacji"
+        }
       }
     }
   }
 
-  @objc private func runInteractive(_ sender: NSMenuItem) {
-    openInteractive(sender.representedObject as? String ?? period())
-  }
+  @objc private func resolveCollisions() { openInteractive(period()) }
 
   private func openInteractive(_ selectedPeriod: String) {
     syncWindow = SyncWindowController(period: selectedPeriod) { [weak self] in self?.refreshReports() }
@@ -1259,7 +993,7 @@ private func todayPeriod() -> String {
 
   @objc private func showClaudeActivity() {
     showSettings()
-    activateSettingsPage(4)
+    activateSettingsPage(2)
   }
 
   @objc private func saveSettings() {
@@ -1328,7 +1062,6 @@ private func todayPeriod() -> String {
       target: targetAddress.map { JiraCredentials(url: $0, email: targetEmail, token: targetToken) },
       targetIssue: targetIssue,
       commentIssueKeys: commentKeysToggle.state == .on,
-      synchronizationTime: savedSetting("SYNC_TIME", fallback: "23:00"),
       reminderTime: reminder,
       workdayHours: hours,
       claudeIntegrationEnabled: claudeIntegration,
@@ -1338,7 +1071,8 @@ private func todayPeriod() -> String {
     )
     let appURL = Bundle.main.bundleURL
     let settingsStore = SettingsStore()
-    let verification = settings.jiraVerification(comparedTo: try? settingsStore.loadDraft())
+    let previousSettings = try? settingsStore.loadDraft()
+    let verification = settings.jiraVerification(comparedTo: previousSettings)
 
     saveButton.isEnabled = false
     settingsProgress.startAnimation(nil)
@@ -1362,7 +1096,9 @@ private func todayPeriod() -> String {
         try ClaudeCodeIntegration().reconcile(enabled: settings.claudeIntegrationEnabled, executable: executable)
         try settingsStore.save(settings)
         try LaunchdManager().reconcile(settings: settings, executable: executable, app: appURL)
-        let persistent = deliverNotification("Konfiguracja działa. Monitoring raportów jest aktywny.") && persistentNotificationsEnabled()
+        if previousSettings == nil {
+          _ = deliverNotification("Konfiguracja gotowa. Powiadomimy Cię tylko wtedy, gdy coś będzie wymagało uwagi.")
+        }
         await MainActor.run {
           self.configuredSyncEnabled = synchronization
           self.configuredReminderTime = reminder
@@ -1373,17 +1109,14 @@ private func todayPeriod() -> String {
           self.setupMenu()
           self.saveButton.isEnabled = true
           self.settingsProgress.stopAnimation(nil)
-          self.settingsFeedback.textColor = persistent ? .systemGreen : .systemOrange
+          self.settingsFeedback.textColor = .systemGreen
           let successMessage = switch (claudeIntegration, calendarIntegration) {
           case (true, true): "Gotowe. Monitoring, Claude Code i Kalendarz są aktywne."
           case (true, false): "Gotowe. Monitoring i Claude Code są aktywne."
           case (false, true): "Gotowe. Monitoring i Kalendarz są aktywne."
           case (false, false): "Gotowe. Monitoring uruchomiony."
           }
-          self.settingsFeedback.stringValue = persistent ? successMessage : "Gotowe. W powiadomieniach wybierz styl „Stałe”."
-          if !persistent, let settings = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension") {
-            NSWorkspace.shared.open(settings)
-          }
+          self.settingsFeedback.stringValue = successMessage
           self.refreshReports()
         }
       } catch {
@@ -1445,9 +1178,9 @@ private func todayPeriod() -> String {
       configuredSyncEnabled = enabled
       configuredCalendarEnabled = enabled
       setupMenu()
-      precondition(todayStatus.menu === item.menu)
-      precondition((syncSchedule.menu === item.menu) == enabled)
-      precondition((historyMenu.supermenu === item.menu) == enabled)
+      precondition(reportSummary.menu === item.menu)
+      precondition(connectionWarning.menu === item.menu)
+      precondition(collisionAction.menu === item.menu)
     }
     print("ok")
   }
@@ -1464,18 +1197,18 @@ private func todayPeriod() -> String {
       return bounds.contains(frame) && frame.height > 0 && !view.isHiddenOrHasHiddenAncestor
     }
     let sourceVisible = visible(sourceURLField, on: 0)
-    let syncVisible = !syncEnabled || visible(syncFrequencyLabel, on: 1)
+    let syncVisible = !syncEnabled || visible(syncFrequencyLabel, on: 0)
     let targetVisibilityIsCorrect = targetBox.isHidden == !syncEnabled
-    let monitoringVisible = visible(reminderTimeField, on: 2) && visible(workdayHoursField, on: 2)
-    let analysisVisible = visible(calendarPopup, on: 3) && visible(catchAllIssueField, on: 3)
-    let activityVisible = activityController.map { visible($0.view, on: 4) } ?? false
+    let automationVisible = visible(reminderTimeField, on: 1) && visible(workdayHoursField, on: 1)
+    let analysisVisible = visible(calendarPopup, on: 1) && visible(catchAllIssueField, on: 1)
+    let activityVisible = activityController.map { visible($0.view, on: 2) } ?? false
     activateSettingsPage(0)
     panel.contentView?.layoutSubtreeIfNeeded()
     let saveFrame = panel.contentView!.convert(saveButton.bounds, from: saveButton)
     precondition(
-      settingsTabView.numberOfTabViewItems == 6 && settingsSidebarButtons.count == 6 &&
+      settingsTabView.numberOfTabViewItems == 3 && settingsSidebarButtons.count == 3 &&
         settingsSidebarButtons.allSatisfy { $0.frame.width > 0 && (38...39).contains($0.frame.height) } &&
-        sourceVisible && syncVisible && targetVisibilityIsCorrect && monitoringVisible && analysisVisible && activityVisible &&
+        sourceVisible && syncVisible && targetVisibilityIsCorrect && automationVisible && analysisVisible && activityVisible &&
         bounds.contains(saveFrame) && saveFrame.height > 0 && !panel.hidesOnDeactivate && panel.delegate === self,
       "Opcje są poza widocznym obszarem"
     )
@@ -1516,7 +1249,7 @@ private extension NSView {
 
 private final class AsyncFailure: @unchecked Sendable { var error: Error? }
 
-private func runAgentMode(_ operation: @escaping @Sendable () async throws -> Void) -> Never {
+private func runAgentMode(failureNotificationKey: String? = nil, _ operation: @escaping @Sendable () async throws -> Void) -> Never {
   let finished = DispatchSemaphore(value: 0)
   let result = AsyncFailure()
   Task.detached {
@@ -1526,17 +1259,18 @@ private func runAgentMode(_ operation: @escaping @Sendable () async throws -> Vo
   finished.wait()
   if let error = result.error {
     fputs("niepowodzenie: \(error.localizedDescription)\n", stderr)
+    if let key = failureNotificationKey, !UserDefaults.standard.bool(forKey: key) {
+      if deliverNotification("Automatyzacja nie działa: \(error.localizedDescription)", identifier: key) {
+        UserDefaults.standard.set(true, forKey: key)
+      }
+    }
     exit(1)
   }
+  if let key = failureNotificationKey { UserDefaults.standard.set(false, forKey: key) }
   exit(0)
 }
 
 private func nativeHours(_ seconds: Int) -> String { String(format: "%.2f", Double(seconds) / 3600) }
-
-private func synchronizationNotification(_ result: SyncResult, issue: String) -> String? {
-  guard result.writtenSeconds > 0 else { return nil }
-  return "Zsynchronizowano \(nativeHours(result.writtenSeconds)) h do \(issue) · liczba dni: \(result.writtenDays)."
-}
 
 private let arguments = ProcessInfo.processInfo.arguments
 
@@ -1583,41 +1317,16 @@ if let notify = arguments.firstIndex(of: "--notify"), arguments.indices.contains
   controller.layoutSelfcheck()
   withExtendedLifetime(controller) {}
 } else if arguments.contains("--selfcheck") {
-  precondition(synchronizationNotification(SyncResult(writtenDays: 2, writtenSeconds: 30600, collisionsSkipped: 0), issue: "AUT-1") == "Zsynchronizowano 8.50 h do AUT-1 · liczba dni: 2.")
-  precondition(synchronizationNotification(SyncResult(writtenDays: 0, writtenSeconds: 0, collisionsSkipped: 0), issue: "AUT-1") == nil)
-  precondition(synchronizationNotification(SyncResult(writtenDays: 0, writtenSeconds: 0, collisionsSkipped: 1), issue: "AUT-1") == nil)
-  let runs = parseLog("""
-  --- 2026-09-01T21:00:00.000Z ---
-  2026-09-01  8.00h  ABC-1
-
-  zapisano: 8.00h -> TIME-1 (2026-09)
-  --- 2026-09-02T21:00:00.000Z ---
-  2026-09-02  5.00h  KOLIZJA: w celu masz juz 8.00h - pomijam
-
-  zapisano: 0.00h -> TIME-1 (2026-09)
-  --- 2026-09-03T21:00:00.000Z ---
-  niepowodzenie: fetch failed
-  """)
-  precondition(runs.count == 3, "runs: \(runs)")
-  precondition(runs[0].hours == 8, "first: \(runs[0])")
-  precondition(runs[1].hours == 0 && runs[1].collisions == 1, "second: \(runs[1])")
-  precondition(runs[2].error == "fetch failed", "third: \(runs[2])")
   let status = try! JSONDecoder().decode(ReportStatus.self, from: Data(#"{"checkedAt":"2026-09-02T14:00:00.000Z","syncEnabled":false,"seconds":12600,"expectedSeconds":28800,"today":{"from":"2026-09-02","to":"2026-09-02","workingDays":1,"sourceSeconds":12600,"targetSeconds":null,"missing":[{"date":"2026-09-02","sourceSeconds":12600}],"differences":null},"monthCapacity":{"workingDays":22,"daysOff":8,"expectedSeconds":633600}}"#.utf8))
-  precondition(status.syncEnabled == false && status.today?.missing.count == 1 && status.today?.differences == nil && status.monthCapacity?.workingDays == 22, "status")
+  precondition(status.today?.missing.count == 1 && status.today?.differences == nil && status.monthCapacity?.workingDays == 22, "status")
   precondition(clockParts("23:05")?.hour == 23 && clockParts("24:00") == nil, "clock")
   precondition(textEditingCommands.contains {
     $0.action == #selector(NSText.paste(_:)) && $0.key == "v" && $0.modifiers == .command
   }, "paste shortcut")
-  precondition((0..<8).map(weekendMessage) == weekendMessages + weekendMessages, "weekend message rotation")
-  precondition((0..<8).map { noDataMessage(day: $0, hour: 7, missingDays: 0) } == (morningMessages + morningMessages).map { " \($0)" }, "morning message rotation")
-  precondition(noDataMessage(day: 7, hour: 7, missingDays: 0) == " od ósmej, szefie", "morning message before work")
-  precondition(noDataMessage(day: 7, hour: 8, missingDays: 0) == " 0.00 h", "reported counter starts at zero")
-  precondition(noDataMessage(day: 7, hour: 7, missingDays: 2) == " braki: 2", "missing reports stay visible before work")
-  precondition(statusBarTitle(seconds: 0, weekendText: "nadgodzinki?", missingDays: 0, day: 7, hour: 7) == " nadgodzinki?", "weekend easter egg")
-  precondition(statusBarTitle(seconds: 0, weekendText: "nadgodzinki?", missingDays: 2, day: 7, hour: 7) == " braki: 2", "weekend warning")
-  precondition(statusBarTitle(seconds: 0, weekendText: nil, missingDays: 0, day: 7, hour: 7) == " od ósmej, szefie", "live zero before work")
-  precondition(statusBarTitle(seconds: 0, weekendText: nil, missingDays: 0, day: 7, hour: 8) == " 0.00 h", "reported counter starts at eight")
-  precondition(statusBarTitle(seconds: 900, weekendText: nil, missingDays: 0, day: 7, hour: 8) == " 0.25 h", "reported time replaces zero")
+  precondition(statusBarTitle(seconds: 0, weekend: true, missingDays: 0) == " ✓", "weekend status")
+  precondition(statusBarTitle(seconds: 0, weekend: true, missingDays: 2) == " Braki: 2", "missing report warning")
+  precondition(statusBarTitle(seconds: 0, weekend: false, missingDays: 0) == " 0.00 h", "reported counter starts at zero")
+  precondition(statusBarTitle(seconds: 900, weekend: false, missingDays: 0) == " 0.25 h", "reported time replaces zero")
   precondition(nextStatusRefresh(after: Date(timeIntervalSinceReferenceDate: 119.5)).timeIntervalSinceReferenceDate == 120, "status refresh aligns to wall clock")
   precondition(nextStatusRefresh(after: Date(timeIntervalSinceReferenceDate: 120.5)).timeIntervalSinceReferenceDate == 180, "status refresh runs once per minute")
   let closedDays = PeriodStatus(from: "2026-08-31", to: "2026-09-03", workingDays: 4, sourceSeconds: 115_200, targetSeconds: 115_200, missing: [], differences: [])
@@ -1628,19 +1337,19 @@ if let notify = arguments.firstIndex(of: "--notify"), arguments.indices.contains
   precondition(dayLabel(LocalDay("2026-09-07")!) == "Poniedziałek, 7 września", "full current date label")
   print("ok")
 } else if arguments.contains("--agent-status") {
-  runAgentMode {
+  runAgentMode(failureNotificationKey: "THIS_IS_LOGGED_STATUS_ERROR") {
     let settings = try SettingsStore().load()
     let state = try await SnapshotStore().refresh(using: .live(settings: settings))
     print("\(state.checkedAt) miesiąc: \(nativeHours(state.month?.sourceSeconds ?? 0))/\(nativeHours(state.monthCapacity?.expectedSeconds ?? 0))h")
   }
 } else if arguments.contains("--agent-reminder") {
-  runAgentMode {
+  runAgentMode(failureNotificationKey: "THIS_IS_LOGGED_REMINDER_ERROR") {
     let settings = try SettingsStore().load()
     let decision = try await TimeReportEngine.live(settings: settings).reminder()
     let activity = settings.claudeIntegrationEnabled
       ? try? ActivityStore().activity(on: Date()) : nil
     let activityMessage = activity?.events.isEmpty == false
-      ? "Analiza pracy z Claude Code jest gotowa. Sprawdź przypisania i timestampy." : nil
+      ? "Analiza dnia jest gotowa. Sprawdź podział czasu między zadania." : nil
     let message = [decision.message, activityMessage].compactMap { $0 }.joined(separator: "\n\n")
     if !message.isEmpty, !deliverNotification(message, category: activityMessage == nil ? nil : activityCategory) {
       throw NSError(domain: "ThisIsLogged", code: 3, userInfo: [NSLocalizedDescriptionKey: "Nie udało się wyświetlić powiadomienia."])
@@ -1649,7 +1358,7 @@ if let notify = arguments.firstIndex(of: "--notify"), arguments.indices.contains
   }
 } else if arguments.contains("--agent-sync") {
   print("--- \(TimeReportEngine.iso(Date())) ---")
-  runAgentMode {
+  runAgentMode(failureNotificationKey: "THIS_IS_LOGGED_SYNC_ERROR") {
     let settings = try SettingsStore().load()
     let engine = TimeReportEngine.live(settings: settings)
     let now = LocalDay(Date())
@@ -1673,15 +1382,19 @@ if let notify = arguments.firstIndex(of: "--notify"), arguments.indices.contains
       return
     }
     let result = try await engine.execute(plan)
-    if let message = synchronizationNotification(result, issue: settings.targetIssue) {
-      if !deliverNotification(message) {
-        fputs("Nie udało się wyświetlić powiadomienia o zapisanej synchronizacji.\n", stderr)
-      }
-    }
     _ = try? await SnapshotStore().refresh(using: engine)
     print("zapisano: \(nativeHours(result.writtenSeconds))h -> \(settings.targetIssue) (\(now.monthID))")
-    if result.collisionsSkipped > 0 {
-      _ = deliverNotification("Wykryto \(result.collisionsSkipped) różnice w \(now.monthID). Automatyzacja niczego nie nadpisała.", category: collisionCategory)
+    let collisionKey = "THIS_IS_LOGGED_COLLISION_\(now.monthID)"
+    if result.collisionsSkipped > 0, !UserDefaults.standard.bool(forKey: collisionKey) {
+      if deliverNotification(
+        "Wykryto \(result.collisionsSkipped) różnice w \(now.monthID). Automatyzacja niczego nie nadpisała.",
+        category: collisionCategory,
+        identifier: collisionKey
+      ) {
+        UserDefaults.standard.set(true, forKey: collisionKey)
+      }
+    } else if result.collisionsSkipped == 0 {
+      UserDefaults.standard.set(false, forKey: collisionKey)
     }
     if plan.cachedSourceAt != nil {
       throw RuntimeError.savedFailure("Uzupełniono dostępne dane z pamięci. Źródło nadal niedostępne — synchronizacja zostanie ponowiona.")

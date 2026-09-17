@@ -21,7 +21,7 @@ import ThisIsLoggedCore
       backing: .buffered,
       defer: false
     )
-    panel.title = "Synchronizacja — \(period)"
+    panel.title = "Różnice do wyjaśnienia — \(period)"
     panel.toolbarStyle = .unifiedCompact
     panel.toolbar = NSToolbar(identifier: "synchronization")
     panel.titleVisibility = .hidden
@@ -56,10 +56,10 @@ import ThisIsLoggedCore
       root.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -18),
     ])
 
-    let title = NSTextField(labelWithString: "Porównanie raportów")
+    let title = NSTextField(labelWithString: "Różnice do wyjaśnienia")
     title.font = .systemFont(ofSize: 17, weight: .semibold)
     root.addArrangedSubview(title)
-    let subtitle = NSTextField(labelWithString: "Różnice są domyślnie pomijane. Nadpisanie usuwa wyłącznie Twoje wpisy z wybranego dnia.")
+    let subtitle = NSTextField(labelWithString: "Automatyzacja uzupełnia bezpieczne braki. Tutaj decydujesz tylko o kolizjach.")
     subtitle.textColor = .secondaryLabelColor
     root.addArrangedSubview(subtitle)
 
@@ -117,24 +117,18 @@ import ThisIsLoggedCore
     progress.stopAnimation(nil)
     rows.arrangedSubviews.forEach { rows.removeArrangedSubview($0); $0.removeFromSuperview() }
     choices.removeAll()
+    let collisions = plan.items.filter { $0.state == .collision }
     rows.addArrangedSubview(row(["Data", "Jira główna", "Cel", "Decyzja"], header: true))
-    for item in plan.items {
+    for item in collisions {
       let action = NSPopUpButton(frame: .zero, pullsDown: false)
-      switch item.state {
-      case .add:
-        action.addItem(withTitle: item.targetSeconds == 0 ? "Dodaj" : "Uzupełnij +\(hours(item.secondsToAdd)) h")
+      if plan.cachedSourceAt != nil {
+        action.addItem(withTitle: "Zostaw bez zmian — źródło offline")
         action.isEnabled = false
-      case .synced:
-        action.addItem(withTitle: "Pomiń — zgodne")
-        action.isEnabled = false
-      case .collision:
-        if plan.cachedSourceAt != nil {
-          action.addItem(withTitle: "Pomiń — źródło offline")
-          action.isEnabled = false
-        } else {
-          action.addItems(withTitles: ["Pomiń", "Zsumuj", "Nadpisz"])
-          choices[item.day] = action
-        }
+      } else {
+        action.addItems(withTitles: ["Zostaw bez zmian", "Dodaj czas ze źródła", "Ustaw jak w głównej Jirze"])
+        action.target = self
+        action.action = #selector(choiceChanged)
+        choices[item.day] = action
       }
       rows.addArrangedSubview(row([
         item.day.description,
@@ -142,16 +136,15 @@ import ThisIsLoggedCore
         item.targetSeconds == 0 ? "—" : "\(hours(item.targetSeconds)) h",
       ], control: action))
     }
-    if plan.items.isEmpty {
-      rows.addArrangedSubview(NSTextField(labelWithString: "Brak worklogów w wybranym okresie."))
+    if collisions.isEmpty {
+      rows.addArrangedSubview(NSTextField(labelWithString: "Brak różnic wymagających decyzji."))
     }
-    let collisions = plan.items.filter { $0.state == .collision }.count
-    feedback.stringValue = "\(plan.items.count) dni · różnice: \(collisions)"
+    feedback.stringValue = collisions.isEmpty ? "Wszystko jest zsynchronizowane." : "Do wyjaśnienia: \(collisions.count)"
     if let timestamp = plan.cachedSourceAt {
       feedback.stringValue += " · źródło z pamięci: \(timestamp)"
     }
-    feedback.textColor = collisions == 0 ? .systemGreen : .systemOrange
-    executeButton.isEnabled = plan.items.contains { $0.state == .add } || collisions > 0
+    feedback.textColor = collisions.isEmpty ? .systemGreen : .systemOrange
+    executeButton.isEnabled = false
     resizeDocument()
   }
 
@@ -172,24 +165,30 @@ import ThisIsLoggedCore
     row.spacing = 12
     let widths: [CGFloat] = [105, 120, 120]
     for (index, width) in widths.enumerated() where index < views.count { views[index].widthAnchor.constraint(equalToConstant: width).isActive = true }
-    if let control { control.widthAnchor.constraint(equalToConstant: 150).isActive = true }
+    if let control { control.widthAnchor.constraint(equalToConstant: 205).isActive = true }
     return row
+  }
+
+  @objc private func choiceChanged() {
+    executeButton.isEnabled = choices.values.contains { $0.indexOfSelectedItem > 0 }
   }
 
   @objc private func execute() {
     guard let engine, let plan else { return }
     var actions: [LocalDay: SyncAction] = [:]
     for (day, popup) in choices {
-      actions[day] = popup.titleOfSelectedItem == "Nadpisz" ? .replace : popup.titleOfSelectedItem == "Zsumuj" ? .add : .skip
+      actions[day] = popup.indexOfSelectedItem == 2 ? .replace : popup.indexOfSelectedItem == 1 ? .add : .skip
     }
-    let writes = plan.items.filter { item in actions[item.day].map { $0 != .skip } ?? (item.state == .add) }.count
+    let writes = actions.values.filter { $0 != .skip }.count
     guard writes > 0 else {
       feedback.stringValue = "Nic nie wybrano do zapisania."
       return
     }
     let alert = NSAlert()
     alert.messageText = "Zapisać \(writes) dni do \(plan.targetIssue)?"
-    alert.informativeText = "Operacja zmieni worklogi w Jirze docelowej."
+    alert.informativeText = actions.values.contains(.replace)
+      ? "Ustawienie wartości jak w głównej Jirze usunie wyłącznie Twoje wpisy z wybranych dni."
+      : "Operacja dopisze czas ze źródła do Jiry docelowej."
     if let timestamp = plan.cachedSourceAt {
       alert.informativeText += " Źródło jest niedostępne; używam godzin pobranych \(timestamp)."
     }
@@ -254,15 +253,16 @@ import ThisIsLoggedCore
         renderedViews.count == 8 && renderedViews.allSatisfy { $0.frame.height > 0 },
       "Okno synchronizacji ma nieprawidłowy układ"
     )
+    choices.values.first?.selectItem(at: 1)
+    choiceChanged()
+    precondition(executeButton.isEnabled, "Wybór decyzji nie aktywuje zapisu")
     let topUpPlan = try! JSONDecoder().decode(SyncPlan.self, from: Data(#"{"from":"2026-09-07","to":"2026-09-07","targetIssue":"AUT-1","items":[{"day":"2026-09-07","sourceSeconds":28800,"targetSeconds":14400,"issueKeys":["RPR-1"],"targetWorklogIDs":["old-1"],"state":"add"}]}"#.utf8))
     render(topUpPlan)
+    precondition(rows.arrangedSubviews.count == 2 && !executeButton.isEnabled, "Bezpieczne uzupełnienia nie powinny wymagać decyzji")
     let syncedPlan = try! JSONDecoder().decode(SyncPlan.self, from: Data(#"{"from":"2026-09-07","to":"2026-09-07","targetIssue":"AUT-1","items":[{"day":"2026-09-07","sourceSeconds":28800,"targetSeconds":28800,"issueKeys":["RPR-1"],"targetWorklogIDs":["old-1","new-1"],"state":"synced"}]}"#.utf8))
     didExecute(SyncResult(writtenDays: 1, writtenSeconds: 14400, collisionsSkipped: 0), refreshedPlan: syncedPlan)
-    let completedRow = rows.arrangedSubviews[1] as! NSStackView
-    let completedDecision = completedRow.arrangedSubviews[3] as! NSPopUpButton
     precondition(
-      (completedRow.arrangedSubviews[2] as! NSTextField).stringValue == "8.00 h" &&
-        completedDecision.titleOfSelectedItem == "Pomiń — zgodne" && !executeButton.isEnabled,
+      rows.arrangedSubviews.count == 2 && !executeButton.isEnabled,
       "Okno nie pokazuje wyniku zakończonej synchronizacji"
     )
     print("ok")
