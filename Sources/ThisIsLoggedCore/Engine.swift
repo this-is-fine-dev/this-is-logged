@@ -156,10 +156,12 @@ public struct TimeReportEngine: Sendable {
   }
 
   public func reminder(now: LocalDay = LocalDay(Date())) async throws -> ReminderDecision {
-    let expected = Int(settings.workdayHours * 3600)
-    let window = Reporting.reportWindow(now: now)
-    let user = try await source.currentUser()
-    let days = try await source.dailyWorklogs(userID: user.id, from: window.lowerBound, to: window.upperBound)
+    reminder(from: try await refresh(now: now), now: now)
+  }
+
+  public func reminder(from snapshot: ReportSnapshot, now: LocalDay = LocalDay(Date())) -> ReminderDecision {
+    let expected = snapshot.expectedSeconds
+    let days = snapshot.sourceDays ?? [:]
     let analysis = Reporting.analyze(now: now, expectedSeconds: expected, sourceDays: days)
     let missing = analysis.underreported.map { MissingDay(date: $0, sourceSeconds: days[$0]?.seconds ?? 0) }
     guard !missing.isEmpty else { return ReminderDecision(missingDays: [], message: nil) }
@@ -276,6 +278,21 @@ public actor SnapshotStore {
     try write(state)
     if let error = state.error ?? state.targetError { throw RuntimeError.savedFailure(error) }
     return state
+  }
+
+  public func reminder(
+    using engine: TimeReportEngine,
+    now: LocalDay = LocalDay(Date()),
+    checkedAt: Date = Date()
+  ) async throws -> ReminderDecision {
+    let state: ReportSnapshot
+    do {
+      state = try await refresh(using: engine, now: now, checkedAt: checkedAt)
+    } catch {
+      guard let saved = read(), saved.error == nil else { throw error }
+      state = saved
+    }
+    return engine.reminder(from: state, now: now)
   }
 
   private func write(_ value: ReportSnapshot) throws {

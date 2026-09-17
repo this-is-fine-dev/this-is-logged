@@ -436,19 +436,33 @@ Task.detached {
     let cacheDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     let cache = SnapshotStore(file: cacheDirectory.appendingPathComponent("status.json"))
     _ = try await cache.refresh(using: engine, now: LocalDay("2026-09-03")!, checkedAt: Date(timeIntervalSince1970: 0))
+    let updatedSource = FakeJira(user: "source", daily: [
+      LocalDay("2026-09-01")!: DayTotal(seconds: 7200, issueKeys: ["WP-1"]),
+      LocalDay("2026-09-02")!: DayTotal(seconds: 28_800, issueKeys: ["WP-2"]),
+      LocalDay("2026-09-03")!: DayTotal(seconds: 5400, issueKeys: ["WP-3"]),
+    ])
+    let reminderEngine = TimeReportEngine(settings: engineSettings, source: updatedSource, target: targetJira)
+    let freshReminder = try await cache.reminder(
+      using: reminderEngine,
+      now: LocalDay("2026-09-03")!,
+      checkedAt: Date(timeIntervalSince1970: 30)
+    )
+    let reminderSnapshot = await cache.read()
+    precondition(freshReminder.message?.contains("Dzisiaj masz 1.50") == true)
+    precondition(reminderSnapshot?.today?.sourceSeconds == 5400, "Reminder and menu snapshot must use the same Jira read")
     let failing = TimeReportEngine(settings: engineSettings, source: FailingJira(), target: targetJira)
     do {
       _ = try await cache.refresh(using: failing, now: LocalDay("2026-09-03")!, checkedAt: Date(timeIntervalSince1970: 60))
       preconditionFailure("offline refresh should fail")
     } catch {}
     let cached = await cache.read()
-    precondition(cached?.today?.sourceSeconds == 3600 && cached?.lastSuccessfulAt == "1970-01-01T00:00:00.000Z")
+    precondition(cached?.today?.sourceSeconds == 5400 && cached?.lastSuccessfulAt == "1970-01-01T00:00:30.000Z")
     precondition(cached?.error == "offline")
     let cachedDay = LocalDay("2026-09-02")!
     let cachedTarget = FakeJira(user: "target", issue: [cachedDay: DayTotal(seconds: 7200)])
     let offlineEngine = TimeReportEngine(settings: engineSettings, source: FailingJira(), target: cachedTarget, snapshots: cache)
     let offlinePlan = try await offlineEngine.syncPlan(from: cachedDay, to: cachedDay)
-    precondition(offlinePlan.cachedSourceAt == "1970-01-01T00:00:00.000Z")
+    precondition(offlinePlan.cachedSourceAt == "1970-01-01T00:00:30.000Z")
     precondition(offlinePlan.items.first?.sourceSeconds == 28800 && offlinePlan.items.first?.secondsToAdd == 21600)
     let offlineResult = try await offlineEngine.execute(offlinePlan)
     precondition(offlineResult.writtenSeconds == 21600, "Cached 8h must add only the missing 6h")

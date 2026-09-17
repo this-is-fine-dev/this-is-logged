@@ -14,6 +14,7 @@ private let reportStatusURL = URL(fileURLWithPath: environment["THIS_IS_LOGGED_S
   ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/this-is-logged/status.json").path)
 private let iconURL = Bundle.main.url(forResource: "AppIcon", withExtension: "png")
 private let statusLabel = "dev.this-is-fine.this-is-logged.status"
+private let statusChangedNotification = Notification.Name("dev.this-is-fine.this-is-logged.status-changed")
 private let configURL: URL = {
   if let configured = environment["THIS_IS_LOGGED_ENV"] { return URL(fileURLWithPath: configured) }
   let home = FileManager.default.homeDirectoryForCurrentUser
@@ -189,6 +190,10 @@ private func nextStatusRefresh(after date: Date) -> Date {
   return Date(timeIntervalSinceReferenceDate: (floor(date.timeIntervalSinceReferenceDate / interval) + 1) * interval)
 }
 
+private func announceStatusChange() {
+  DistributedNotificationCenter.default().post(name: statusChangedNotification, object: nil)
+}
+
 private func completedPeriod(_ period: PeriodStatus?, including day: PeriodStatus?, includeDay: Bool) -> PeriodStatus? {
   guard includeDay, let period, let day, day.workingDays > 0, day.from > period.to else { return period }
   return PeriodStatus(
@@ -297,6 +302,7 @@ private func period() -> String {
   private var syncWindow: SyncWindowController?
   private var activityController: ClaudeActivityViewController?
   private var timer: Timer?
+  private var statusObserver: NSObjectProtocol?
   private var lastStatusKick = Date.distantPast
   private lazy var normalMenuIcon = menuIcon()
   private var configuredSyncEnabled = savedSetting("SYNC_ENABLED", fallback: environment["THIS_IS_LOGGED_SYNC_ENABLED"] ?? "0") == "1"
@@ -314,6 +320,13 @@ private func period() -> String {
     let center = UNUserNotificationCenter.current()
     center.delegate = self
     registerNotificationCategories(center)
+    statusObserver = DistributedNotificationCenter.default().addObserver(
+      forName: statusChangedNotification,
+      object: nil,
+      queue: .main
+    ) { [weak self] _ in
+      Task { @MainActor in self?.refresh() }
+    }
     setupMenu()
     setupSettingsPanel()
     refresh()
@@ -1348,12 +1361,14 @@ if let notify = arguments.firstIndex(of: "--notify"), arguments.indices.contains
   runAgentMode(failureNotificationKey: "THIS_IS_LOGGED_STATUS_ERROR") {
     let settings = try SettingsStore().load()
     let state = try await SnapshotStore().refresh(using: .live(settings: settings))
+    announceStatusChange()
     print("\(state.checkedAt) miesiąc: \(nativeHours(state.month?.sourceSeconds ?? 0))/\(nativeHours(state.monthCapacity?.expectedSeconds ?? 0))h")
   }
 } else if arguments.contains("--agent-reminder") {
   runAgentMode(failureNotificationKey: "THIS_IS_LOGGED_REMINDER_ERROR") {
     let settings = try SettingsStore().load()
-    let decision = try await TimeReportEngine.live(settings: settings).reminder()
+    let decision = try await SnapshotStore().reminder(using: .live(settings: settings))
+    announceStatusChange()
     let activity = settings.claudeIntegrationEnabled
       ? try? ActivityStore().activity(on: Date()) : nil
     let activityMessage = activity?.events.isEmpty == false
@@ -1391,6 +1406,7 @@ if let notify = arguments.firstIndex(of: "--notify"), arguments.indices.contains
     }
     let result = try await engine.execute(plan)
     _ = try? await SnapshotStore().refresh(using: engine)
+    announceStatusChange()
     print("zapisano: \(nativeHours(result.writtenSeconds))h -> \(settings.targetIssue) (\(now.monthID))")
     let collisionKey = "THIS_IS_LOGGED_COLLISION_\(now.monthID)"
     if result.collisionsSkipped > 0, !UserDefaults.standard.bool(forKey: collisionKey) {
