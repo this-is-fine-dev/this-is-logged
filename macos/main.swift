@@ -640,22 +640,34 @@ private func period() -> String {
   }
 
   private func addSettingsPage(title: String, views: [NSView]) {
-    let page = NSView()
+    let scroll = NSScrollView()
+    scroll.hasVerticalScroller = true
+    scroll.drawsBackground = false
+    scroll.borderType = .noBorder
+    let page = FlippedSettingsPage()
+    page.translatesAutoresizingMaskIntoConstraints = false
     let stack = NSStackView(views: views)
     stack.orientation = .vertical
     stack.alignment = .leading
     stack.spacing = 16
     stack.translatesAutoresizingMaskIntoConstraints = false
     page.addSubview(stack)
+    scroll.documentView = page
     NSLayoutConstraint.activate([
+      page.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
+      page.trailingAnchor.constraint(equalTo: scroll.contentView.trailingAnchor),
+      page.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
+      page.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
+      page.heightAnchor.constraint(greaterThanOrEqualTo: scroll.contentView.heightAnchor),
       stack.leadingAnchor.constraint(equalTo: page.leadingAnchor, constant: 10),
       stack.trailingAnchor.constraint(equalTo: page.trailingAnchor, constant: -10),
       stack.topAnchor.constraint(equalTo: page.topAnchor, constant: 16),
+      stack.bottomAnchor.constraint(equalTo: page.bottomAnchor, constant: -16),
     ])
     for view in views { view.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true }
     let item = NSTabViewItem(identifier: title)
     item.label = title
-    item.view = page
+    item.view = scroll
     settingsTabView.addTabViewItem(item)
   }
 
@@ -1205,11 +1217,15 @@ private func period() -> String {
     activateSettingsPage(0)
     panel.contentView?.layoutSubtreeIfNeeded()
     let saveFrame = panel.contentView!.convert(saveButton.bounds, from: saveButton)
+    let connectionsScroll = targetBox.enclosingScrollView!
+    let connectionsFrame = panel.contentView!.convert(connectionsScroll.bounds, from: connectionsScroll)
     precondition(
       settingsTabView.numberOfTabViewItems == 3 && settingsSidebarButtons.count == 3 &&
         settingsSidebarButtons.allSatisfy { $0.frame.width > 0 && (38...39).contains($0.frame.height) } &&
         sourceVisible && syncVisible && targetVisibilityIsCorrect && automationVisible && analysisVisible && activityVisible &&
-        bounds.contains(saveFrame) && saveFrame.height > 0 && !panel.hidesOnDeactivate && panel.delegate === self,
+        bounds.contains(saveFrame) && saveFrame.height > 0 && !connectionsFrame.intersects(saveFrame) &&
+        connectionsScroll.hasVerticalScroller &&
+        !panel.hidesOnDeactivate && panel.delegate === self,
       "Opcje są poza widocznym obszarem"
     )
     print("ok")
@@ -1245,6 +1261,10 @@ private func period() -> String {
 
 private extension NSView {
   var subviewsRecursive: [NSView] { subviews + subviews.flatMap(\.subviewsRecursive) }
+}
+
+private final class FlippedSettingsPage: NSView {
+  nonisolated override var isFlipped: Bool { true }
 }
 
 private final class AsyncFailure: @unchecked Sendable { var error: Error? }
