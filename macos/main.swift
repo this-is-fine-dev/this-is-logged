@@ -446,18 +446,15 @@ private func period() -> String {
       settingsSidebarButtons.append(button)
       sidebarStack.addArrangedSubview(button)
     }
-    let updateButton = NSButton(title: "Sprawdź aktualizacje…", target: self, action: #selector(checkForUpdates(_:)))
-    updateButton.bezelStyle = .inline
-    sidebarStack.setCustomSpacing(18, after: settingsSidebarButtons.last!)
-    sidebarStack.addArrangedSubview(updateButton)
     sidebar.addSubview(sidebarStack)
 
     let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"
-    let versionLabel = NSTextField(labelWithString: "This Is Logged · v\(version)")
-    versionLabel.font = .systemFont(ofSize: 10)
-    versionLabel.textColor = .tertiaryLabelColor
-    versionLabel.translatesAutoresizingMaskIntoConstraints = false
-    sidebar.addSubview(versionLabel)
+    let updateButton = NSButton(title: "Sprawdź aktualizacje · v\(version)", target: self, action: #selector(checkForUpdates(_:)))
+    updateButton.bezelStyle = .inline
+    updateButton.font = .systemFont(ofSize: 10)
+    updateButton.contentTintColor = .tertiaryLabelColor
+    updateButton.translatesAutoresizingMaskIntoConstraints = false
+    sidebar.addSubview(updateButton)
 
     settingsTabView.tabViewType = .noTabsNoBorder
     settingsTabView.translatesAutoresizingMaskIntoConstraints = false
@@ -480,8 +477,8 @@ private func period() -> String {
       sidebarStack.leadingAnchor.constraint(equalTo: sidebar.leadingAnchor, constant: 14),
       sidebarStack.trailingAnchor.constraint(equalTo: sidebar.trailingAnchor, constant: -14),
       sidebarStack.topAnchor.constraint(equalTo: content.safeAreaLayoutGuide.topAnchor, constant: 16),
-      versionLabel.leadingAnchor.constraint(equalTo: sidebar.leadingAnchor, constant: 18),
-      versionLabel.bottomAnchor.constraint(equalTo: sidebar.bottomAnchor, constant: -15),
+      updateButton.leadingAnchor.constraint(equalTo: sidebar.leadingAnchor, constant: 14),
+      updateButton.bottomAnchor.constraint(equalTo: sidebar.bottomAnchor, constant: -10),
       settingsTabView.leadingAnchor.constraint(equalTo: sidebar.trailingAnchor, constant: 16),
       settingsTabView.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -16),
       settingsTabView.topAnchor.constraint(equalTo: content.safeAreaLayoutGuide.topAnchor, constant: 8),
