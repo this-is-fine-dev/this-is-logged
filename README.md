@@ -75,7 +75,7 @@ Menu zawiera:
 - analizę dnia, ustawienia i zakończenie aplikacji.
 
 Odświeżanie, bezpieczne uzupełnianie drugiej Jiry i aktualizacje działają automatycznie. Opcje
-techniczne, log i ręczne sprawdzenie aktualizacji są dostępne w ustawieniach.
+techniczne pozostają w logach systemowych, a ręczne sprawdzenie aktualizacji jest dostępne w ustawieniach.
 
 ## Powiadomienia
 

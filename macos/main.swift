@@ -9,10 +9,6 @@ private let collisionCategory = "THIS_IS_LOGGED_COLLISION"
 private let resolveCollisionsAction = "RESOLVE_COLLISIONS"
 private let activityCategory = "THIS_IS_LOGGED_ACTIVITY"
 private let openActivityAction = "OPEN_ACTIVITY"
-private let logURL = FileManager.default.homeDirectoryForCurrentUser
-  .appendingPathComponent("Library/Logs/this-is-logged.log")
-private let statusLogURL = FileManager.default.homeDirectoryForCurrentUser
-  .appendingPathComponent("Library/Logs/this-is-logged-status.log")
 private let environment = ProcessInfo.processInfo.environment
 private let reportStatusURL = URL(fileURLWithPath: environment["THIS_IS_LOGGED_STATUS"]
   ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/this-is-logged/status.json").path)
@@ -452,11 +448,8 @@ private func period() -> String {
     }
     let updateButton = NSButton(title: "Sprawdź aktualizacje…", target: self, action: #selector(checkForUpdates(_:)))
     updateButton.bezelStyle = .inline
-    let logButton = NSButton(title: "Otwórz log techniczny", target: self, action: #selector(openLog))
-    logButton.bezelStyle = .inline
     sidebarStack.setCustomSpacing(18, after: settingsSidebarButtons.last!)
     sidebarStack.addArrangedSubview(updateButton)
-    sidebarStack.addArrangedSubview(logButton)
     sidebar.addSubview(sidebarStack)
 
     let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"
@@ -809,7 +802,6 @@ private func period() -> String {
   }
 
   private func refresh() {
-    var icon = "clock"
     let status = try? JSONDecoder().decode(ReportStatus.self, from: Data(contentsOf: reportStatusURL))
     let now = Date()
     let statusIsStale = status.flatMap { isoDate($0.checkedAt) }.map { now.timeIntervalSince($0) >= 55 } ?? true
@@ -834,7 +826,6 @@ private func period() -> String {
       setDetails(reportSummary, completedMonth.missing.map {
         "\(shortDate($0.date)) · brakuje \(formatSeconds(max(0, expected - $0.sourceSeconds))) h"
       })
-      icon = "exclamationmark.circle"
     } else if status != nil {
       reportSummary.title = "Wszystkie raporty są uzupełnione"
       setDetails(reportSummary, ["Monitoring i synchronizacja działają automatycznie."])
@@ -850,18 +841,16 @@ private func period() -> String {
     if warning != nil {
       let checked = status.flatMap { isoDate($0.lastSuccessfulAt ?? $0.checkedAt) }
       connectionWarning.title = checked.map { "Jira niedostępna · dane z \(formatter.string(from: $0))" } ?? "Jira niedostępna"
-      icon = "exclamationmark.triangle"
     }
 
     let differences = (completedMonth?.differences ?? []) + ((isWeekend || cachedDayIsClosed) ? [] : (today?.differences ?? []))
     collisionAction.isHidden = !configuredSyncEnabled || differences.isEmpty
     collisionAction.title = "Wyjaśnij różnice synchronizacji · \(differences.count)…"
-    if !differences.isEmpty { icon = "exclamationmark.triangle" }
     item.button?.title = statusBarTitle(seconds: today?.sourceSeconds ?? 0, weekend: isWeekend, missingDays: missingDays)
-    if icon == "clock", let image = normalMenuIcon {
+    if let image = normalMenuIcon {
       item.button?.image = image
     } else {
-      item.button?.image = NSImage(systemSymbolName: icon, accessibilityDescription: "This Is Logged")
+      item.button?.image = NSImage(systemSymbolName: "clock", accessibilityDescription: "This Is Logged")
     }
   }
 
@@ -979,8 +968,6 @@ private func period() -> String {
     reportSummary.title = "Odświeżam dane…"
     runAgent(statusLabel, restart: true)
   }
-
-  @objc private func openLog() { NSWorkspace.shared.open(configuredSyncEnabled ? logURL : statusLogURL) }
 
   private func runAgent(_ label: String, restart: Bool = false) {
     let arguments = ["kickstart"] + (restart ? ["-k"] : []) + ["gui/\(getuid())/\(label)"]
