@@ -156,6 +156,18 @@ precondition(legacy.source.url.absoluteString == "https://firma.atlassian.net")
 precondition(legacy.synchronizationEnabled && legacy.targetIssue == "AUT-1" && legacy.target?.token == "target=x")
 precondition(legacy.workdayHours == 7.5)
 precondition(!legacy.calendarIntegrationEnabled && legacy.calendarIdentifier.isEmpty && legacy.catchAllIssue == "RPR-18")
+var vacationSettings = legacy
+vacationSettings.vacationStart = LocalDay("2026-09-10")!
+vacationSettings.vacationEnd = LocalDay("2026-09-17")!
+precondition(!vacationSettings.isOnVacation(on: LocalDay("2026-09-09")!))
+precondition(vacationSettings.isOnVacation(on: LocalDay("2026-09-10")!))
+precondition(vacationSettings.isOnVacation(on: LocalDay("2026-09-17")!))
+precondition(!vacationSettings.isOnVacation(on: LocalDay("2026-09-18")!))
+vacationSettings.vacationEnd = LocalDay("2026-09-09")!
+do {
+  _ = try vacationSettings.validated()
+  preconditionFailure("Odwrócony zakres urlopu powinien być odrzucony")
+} catch SettingsError.invalidVacation {}
 var calendarSettings = legacy
 calendarSettings.calendarIntegrationEnabled = true
 do {
@@ -185,9 +197,10 @@ precondition(initialVerification.source && initialVerification.target)
 let settingsDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
 let settingsFile = settingsDirectory.appendingPathComponent("settings.json")
 let settingsStore = SettingsStore(file: settingsFile, legacyFile: settingsDirectory.appendingPathComponent("legacy.env"))
-try settingsStore.save(legacy)
+vacationSettings.vacationEnd = LocalDay("2026-09-17")!
+try settingsStore.save(vacationSettings)
 let savedSettings = try settingsStore.load()
-precondition(savedSettings == legacy)
+precondition(savedSettings == vacationSettings)
 let settingsJSON = try String(contentsOf: settingsFile, encoding: .utf8)
 precondition(settingsJSON.contains("source") && settingsJSON.contains("target=x"))
 let permissions = try FileManager.default.attributesOfItem(atPath: settingsFile.path)[.posixPermissions] as? NSNumber

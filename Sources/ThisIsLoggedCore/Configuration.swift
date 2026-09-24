@@ -20,6 +20,8 @@ public struct AppSettings: Equatable, Sendable {
   public var commentIssueKeys: Bool
   public var reminderTime: String
   public var workdayHours: Double
+  public var vacationStart: LocalDay?
+  public var vacationEnd: LocalDay?
   public var claudeIntegrationEnabled: Bool
   public var calendarIntegrationEnabled: Bool
   public var calendarIdentifier: String
@@ -33,6 +35,8 @@ public struct AppSettings: Equatable, Sendable {
     commentIssueKeys: Bool = false,
     reminderTime: String = "16:00",
     workdayHours: Double = 8,
+    vacationStart: LocalDay? = nil,
+    vacationEnd: LocalDay? = nil,
     claudeIntegrationEnabled: Bool = false,
     calendarIntegrationEnabled: Bool = false,
     calendarIdentifier: String = "",
@@ -45,6 +49,8 @@ public struct AppSettings: Equatable, Sendable {
     self.commentIssueKeys = commentIssueKeys
     self.reminderTime = reminderTime
     self.workdayHours = workdayHours
+    self.vacationStart = vacationStart
+    self.vacationEnd = vacationEnd
     self.claudeIntegrationEnabled = claudeIntegrationEnabled
     self.calendarIntegrationEnabled = calendarIntegrationEnabled
     self.calendarIdentifier = calendarIdentifier
@@ -55,6 +61,8 @@ public struct AppSettings: Equatable, Sendable {
     guard Self.validURL(source.url), !source.token.isEmpty else { throw SettingsError.invalidSource }
     if Self.isCloud(source.url), !source.email.contains("@") { throw SettingsError.sourceEmailRequired }
     guard Self.validClock(reminderTime), workdayHours > 0, workdayHours <= 24 else { throw SettingsError.invalidSchedule }
+    if (vacationStart == nil) != (vacationEnd == nil) { throw SettingsError.invalidVacation }
+    if let vacationStart, let vacationEnd, vacationStart > vacationEnd { throw SettingsError.invalidVacation }
     if claudeIntegrationEnabled || calendarIntegrationEnabled {
       guard catchAllIssue.range(of: #"^[A-Z][A-Z0-9]*-\d+$"#, options: .regularExpression) != nil
       else { throw SettingsError.invalidActivity }
@@ -67,6 +75,11 @@ public struct AppSettings: Equatable, Sendable {
       if Self.isCloud(target.url), !target.email.contains("@") { throw SettingsError.targetEmailRequired }
     }
     return self
+  }
+
+  public func isOnVacation(on day: LocalDay = LocalDay(Date())) -> Bool {
+    guard let vacationStart, let vacationEnd else { return false }
+    return vacationStart...vacationEnd ~= day
   }
 
   public static func normalizedURL(_ value: String) -> URL? {
@@ -104,6 +117,7 @@ public enum SettingsError: LocalizedError {
   case invalidTarget
   case targetEmailRequired
   case invalidSchedule
+  case invalidVacation
   case invalidActivity
   case invalidCalendar
 
@@ -115,6 +129,7 @@ public enum SettingsError: LocalizedError {
     case .invalidTarget: "Uzupełnij URL, token i zadanie Jiry docelowej."
     case .targetEmailRequired: "Docelowa Jira Cloud wymaga emaila konta Atlassian."
     case .invalidSchedule: "Podaj godziny w formacie GG:MM i pełny dzień od 0 do 24 h."
+    case .invalidVacation: "Data końca urlopu nie może być wcześniejsza niż data początku."
     case .invalidActivity: "Podaj poprawne zadanie zbiorcze, np. RPR-18."
     case .invalidCalendar: "Wybierz konto kalendarza ze spotkaniami."
     }
@@ -137,6 +152,8 @@ public final class SettingsStore: @unchecked Sendable {
     var commentIssueKeys: Bool
     var reminderTime: String
     var workdayHours: Double
+    var vacationStart: LocalDay?
+    var vacationEnd: LocalDay?
     var claudeIntegrationEnabled: Bool?
     var calendarIntegrationEnabled: Bool?
     var calendarIdentifier: String?
@@ -182,6 +199,8 @@ public final class SettingsStore: @unchecked Sendable {
       commentIssueKeys: stored.commentIssueKeys,
       reminderTime: stored.reminderTime,
       workdayHours: stored.workdayHours,
+      vacationStart: stored.vacationStart,
+      vacationEnd: stored.vacationEnd,
       claudeIntegrationEnabled: stored.claudeIntegrationEnabled ?? false,
       calendarIntegrationEnabled: stored.calendarIntegrationEnabled ?? false,
       calendarIdentifier: stored.calendarIdentifier ?? "",
@@ -203,6 +222,8 @@ public final class SettingsStore: @unchecked Sendable {
       commentIssueKeys: settings.commentIssueKeys,
       reminderTime: settings.reminderTime,
       workdayHours: settings.workdayHours,
+      vacationStart: settings.vacationStart,
+      vacationEnd: settings.vacationEnd,
       claudeIntegrationEnabled: settings.claudeIntegrationEnabled,
       calendarIntegrationEnabled: settings.calendarIntegrationEnabled,
       calendarIdentifier: settings.calendarIdentifier,

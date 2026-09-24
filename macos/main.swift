@@ -226,6 +226,8 @@ private func readSettings() -> [String: String] {
       "COMMENT_KEYS": settings.commentIssueKeys ? "1" : "0",
       "REMINDER_TIME": settings.reminderTime,
       "WORKDAY_HOURS": String(settings.workdayHours),
+      "VACATION_START": settings.vacationStart?.description ?? "",
+      "VACATION_END": settings.vacationEnd?.description ?? "",
       "CLAUDE_ENABLED": settings.claudeIntegrationEnabled ? "1" : "0",
       "CALENDAR_ENABLED": settings.calendarIntegrationEnabled ? "1" : "0",
       "CALENDAR_ID": settings.calendarIdentifier,
@@ -287,6 +289,9 @@ private func period() -> String {
   private let syncFrequencyLabel = NSTextField(labelWithString: "Co 5 minut i po wybudzeniu")
   private let reminderTimeField = NSTextField(frame: .zero)
   private let workdayHoursField = NSTextField(frame: .zero)
+  private lazy var vacationToggle = NSSwitch(frame: .zero)
+  private lazy var vacationStartPicker = NSDatePicker(frame: .zero)
+  private lazy var vacationEndPicker = NSDatePicker(frame: .zero)
   private let claudeToggle = NSSwitch(frame: .zero)
   private let calendarToggle = NSSwitch(frame: .zero)
   private let calendarPopup = NSPopUpButton(frame: .zero, pullsDown: false)
@@ -548,6 +553,14 @@ private func period() -> String {
     claudeToggle.target = self
     claudeToggle.action = #selector(toggleClaude)
     calendarPopup.widthAnchor.constraint(equalToConstant: 300).isActive = true
+    vacationToggle.target = self
+    vacationToggle.action = #selector(toggleVacation)
+    for picker in [vacationStartPicker, vacationEndPicker] {
+      picker.datePickerElements = .yearMonthDay
+      picker.datePickerStyle = .textFieldAndStepper
+      picker.locale = Locale(identifier: "pl_PL")
+      picker.widthAnchor.constraint(equalToConstant: 140).isActive = true
+    }
 
     addSettingsPage(title: "Połączenia", views: [
       settingsSection("POŁĄCZENIE", [
@@ -561,6 +574,10 @@ private func period() -> String {
       ("Zadanie zbiorcze", catchAllIssueField), ("Zasada", claudeDescription),
     ])
     addSettingsPage(title: "Automatyzacja", views: [
+      settingsSection("URLOP", [
+        ("Wstrzymaj automatyzację", vacationToggle),
+        ("Od", vacationStartPicker), ("Do", vacationEndPicker),
+      ]),
       settingsSection("HARMONOGRAM", [
         ("Przypomnienie", reminderTimeField), ("Pełny dzień", hoursControl),
       ]),
@@ -604,6 +621,7 @@ private func period() -> String {
     calendarToggle.state = configuredCalendarEnabled ? .on : .off
     populateCalendarSources(selected: savedSetting("CALENDAR_ID", fallback: ""))
     toggleSynchronization()
+    toggleVacation()
     toggleAnalysisFeatures()
     activateSettingsPage(0)
   }
@@ -743,6 +761,11 @@ private func period() -> String {
     targetBox.isHidden = syncToggle.state != .on
   }
 
+  @objc private func toggleVacation() {
+    vacationStartPicker.isEnabled = vacationToggle.state == .on
+    vacationEndPicker.isEnabled = vacationToggle.state == .on
+  }
+
   @objc private func toggleClaude() { toggleAnalysisFeatures() }
 
   private func toggleAnalysisFeatures() {
@@ -816,15 +839,20 @@ private func period() -> String {
   }
 
   private func refresh() {
-    let status = try? JSONDecoder().decode(ReportStatus.self, from: Data(contentsOf: reportStatusURL))
     let now = Date()
+    let currentDay = LocalDay(now)
+    if let settings = try? SettingsStore().loadDraft(), settings.isOnVacation(on: currentDay),
+       let vacationEnd = settings.vacationEnd {
+      renderVacation(until: vacationEnd)
+      return
+    }
+    let status = try? JSONDecoder().decode(ReportStatus.self, from: Data(contentsOf: reportStatusURL))
     let statusIsStale = status.flatMap { isoDate($0.checkedAt) }.map { now.timeIntervalSince($0) >= 55 } ?? true
     if statusIsStale, now.timeIntervalSince(lastStatusKick) >= 55 {
       lastStatusKick = now
       runAgent(statusLabel)
     }
     let isWeekend = Calendar.current.isDateInWeekend(now)
-    let currentDay = LocalDay(now)
     let today = currentToday(status, on: currentDay)
     let cachedDayIsClosed = status?.today.map { $0.to < currentDay.description } ?? false
     let month = status?.month.flatMap { $0.from.hasPrefix(currentDay.monthID) ? $0 : nil }
@@ -866,6 +894,25 @@ private func period() -> String {
     } else {
       item.button?.image = NSImage(systemSymbolName: "clock", accessibilityDescription: "This Is Logged")
     }
+  }
+
+  private func renderVacation(until end: LocalDay) {
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "pl_PL")
+    formatter.dateFormat = "d MMMM yyyy"
+    let endText = formatter.string(from: end.date)
+    headerTodayLabel.stringValue = "URLOP"
+    headerTodayValue.stringValue = "Odpoczywaj"
+    headerMonthLabel.stringValue = "AUTOMATYZACJA"
+    headerMonthValue.stringValue = "WSTRZYMANA"
+    headerMonthDetail.stringValue = "Do " + endText + " włącznie"
+    reportSummary.title = "Synchronizacja i powiadomienia są wyłączone"
+    reportSummary.submenu = NSMenu()
+    setDetails(reportSummary, ["Automatyzacja wznowi się po urlopie."])
+    connectionWarning.isHidden = true
+    collisionAction.isHidden = true
+    item.button?.title = " Urlop"
+    item.button?.image = normalMenuIcon ?? NSImage(systemSymbolName: "clock", accessibilityDescription: "This Is Logged")
   }
 
   private func renderHeader(_ status: ReportStatus?, today: PeriodStatus?, month: PeriodStatus?, weekendText: String?, missingDays: Int) {
@@ -958,11 +1005,17 @@ private func period() -> String {
     commentKeysToggle.state = values["COMMENT_KEYS"] == "1" ? .on : .off
     reminderTimeField.stringValue = values["REMINDER_TIME"] ?? configuredReminderTime
     workdayHoursField.stringValue = values["WORKDAY_HOURS"] ?? configuredWorkdayHours
+    let vacationStart = values["VACATION_START"].flatMap(LocalDay.init)
+    let vacationEnd = values["VACATION_END"].flatMap(LocalDay.init)
+    vacationToggle.state = vacationStart != nil && vacationEnd != nil ? .on : .off
+    vacationStartPicker.dateValue = vacationStart?.date ?? Date()
+    vacationEndPicker.dateValue = vacationEnd?.date ?? Calendar.current.date(byAdding: .day, value: 7, to: Date())!
     claudeToggle.state = values["CLAUDE_ENABLED"] == "1" ? .on : .off
     catchAllIssueField.stringValue = values["CATCH_ALL_ISSUE"] ?? "RPR-18"
     calendarToggle.state = values["CALENDAR_ENABLED"] == "1" ? .on : .off
     populateCalendarSources(selected: values["CALENDAR_ID"] ?? "")
     toggleSynchronization()
+    toggleVacation()
     settingsFeedback.textColor = .secondaryLabelColor
     settingsFeedback.stringValue = configurationComplete(values) ? "Zmiany zostaną sprawdzone w Jirze przed zapisem." : "Uzupełnij Jirę główną, aby uruchomić monitoring."
     NSApplication.shared.activate(ignoringOtherApps: true)
@@ -1024,6 +1077,8 @@ private func period() -> String {
     let calendarIdentifier = calendarPopup.selectedItem?.representedObject as? String ?? ""
     let reminder = reminderTimeField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
     let hoursText = workdayHoursField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: ",", with: ".")
+    let vacationStart = vacationToggle.state == .on ? LocalDay(vacationStartPicker.dateValue) : nil
+    let vacationEnd = vacationToggle.state == .on ? LocalDay(vacationEndPicker.dateValue) : nil
     let validURL: (String) -> Bool = { value in
       guard let url = URL(string: value) else { return false }
       return ["http", "https"].contains(url.scheme?.lowercased() ?? "") && url.host != nil
@@ -1066,6 +1121,11 @@ private func period() -> String {
       settingsFeedback.stringValue = "Podaj godziny w formacie GG:MM i pełny dzień od 0 do 24 h."
       return
     }
+    if let vacationStart, let vacationEnd, vacationStart > vacationEnd {
+      settingsFeedback.textColor = .systemRed
+      settingsFeedback.stringValue = "Data końca urlopu nie może być wcześniejsza niż data początku."
+      return
+    }
 
     guard let sourceAddress = URL(string: sourceURL), let executable = Bundle.main.executableURL else { return }
     let targetAddress = synchronization ? URL(string: targetURL) : nil
@@ -1077,6 +1137,8 @@ private func period() -> String {
       commentIssueKeys: commentKeysToggle.state == .on,
       reminderTime: reminder,
       workdayHours: hours,
+      vacationStart: vacationStart,
+      vacationEnd: vacationEnd,
       claudeIntegrationEnabled: claudeIntegration,
       calendarIntegrationEnabled: calendarIntegration,
       calendarIdentifier: calendarIdentifier,
@@ -1109,7 +1171,7 @@ private func period() -> String {
         try ClaudeCodeIntegration().reconcile(enabled: settings.claudeIntegrationEnabled, executable: executable)
         try settingsStore.save(settings)
         try LaunchdManager().reconcile(settings: settings, executable: executable, app: appURL)
-        if previousSettings == nil {
+        if previousSettings == nil && !settings.isOnVacation() {
           _ = deliverNotification("Konfiguracja gotowa. Powiadomimy Cię tylko wtedy, gdy coś będzie wymagało uwagi.")
         }
         await MainActor.run {
@@ -1123,14 +1185,19 @@ private func period() -> String {
           self.saveButton.isEnabled = true
           self.settingsProgress.stopAnimation(nil)
           self.settingsFeedback.textColor = .systemGreen
-          let successMessage = switch (claudeIntegration, calendarIntegration) {
-          case (true, true): "Gotowe. Monitoring, Claude Code i Kalendarz są aktywne."
-          case (true, false): "Gotowe. Monitoring i Claude Code są aktywne."
-          case (false, true): "Gotowe. Monitoring i Kalendarz są aktywne."
-          case (false, false): "Gotowe. Monitoring uruchomiony."
+          let successMessage: String
+          if settings.isOnVacation() {
+            successMessage = "Gotowe. Automatyzacja jest wstrzymana na czas urlopu."
+          } else {
+            successMessage = switch (claudeIntegration, calendarIntegration) {
+            case (true, true): "Gotowe. Monitoring, Claude Code i Kalendarz są aktywne."
+            case (true, false): "Gotowe. Monitoring i Claude Code są aktywne."
+            case (false, true): "Gotowe. Monitoring i Kalendarz są aktywne."
+            case (false, false): "Gotowe. Monitoring uruchomiony."
+            }
           }
           self.settingsFeedback.stringValue = successMessage
-          self.refreshReports()
+          if settings.isOnVacation() { self.refresh() } else { self.refreshReports() }
         }
       } catch {
         await MainActor.run {
@@ -1195,7 +1262,7 @@ private func period() -> String {
       precondition(connectionWarning.menu === item.menu)
       precondition(collisionAction.menu === item.menu)
     }
-    print("ok")
+    FileHandle.standardOutput.write(Data("ok\n".utf8))
   }
 
   func layoutSelfcheck(syncEnabled: Bool) {
@@ -1205,6 +1272,7 @@ private func period() -> String {
     let bounds = panel.contentView!.bounds
     func visible(_ view: NSView, on page: Int) -> Bool {
       activateSettingsPage(page)
+      view.scrollToVisible(view.bounds)
       panel.contentView?.layoutSubtreeIfNeeded()
       let frame = panel.contentView!.convert(view.bounds, from: view)
       return bounds.contains(frame) && frame.height > 0 && !view.isHiddenOrHasHiddenAncestor
@@ -1212,6 +1280,7 @@ private func period() -> String {
     let sourceVisible = visible(sourceURLField, on: 0)
     let syncVisible = !syncEnabled || visible(syncFrequencyLabel, on: 0)
     let targetVisibilityIsCorrect = targetBox.isHidden == !syncEnabled
+    let vacationVisible = visible(vacationToggle, on: 1) && visible(vacationEndPicker, on: 1)
     let automationVisible = visible(reminderTimeField, on: 1) && visible(workdayHoursField, on: 1)
     let analysisVisible = visible(calendarPopup, on: 1) && visible(catchAllIssueField, on: 1)
     let activityVisible = activityController.map { visible($0.view, on: 2) } ?? false
@@ -1223,7 +1292,7 @@ private func period() -> String {
     precondition(
       settingsTabView.numberOfTabViewItems == 3 && settingsSidebarButtons.count == 3 &&
         settingsSidebarButtons.allSatisfy { $0.frame.width > 0 && (38...39).contains($0.frame.height) } &&
-        sourceVisible && syncVisible && targetVisibilityIsCorrect && automationVisible && analysisVisible && activityVisible &&
+        sourceVisible && syncVisible && targetVisibilityIsCorrect && vacationVisible && automationVisible && analysisVisible && activityVisible &&
         bounds.contains(saveFrame) && saveFrame.height > 0 && !connectionsFrame.intersects(saveFrame) &&
         connectionsScroll.hasVerticalScroller &&
         !panel.hidesOnDeactivate && panel.delegate === self,
@@ -1360,6 +1429,7 @@ if let notify = arguments.firstIndex(of: "--notify"), arguments.indices.contains
 } else if arguments.contains("--agent-status") {
   runAgentMode(failureNotificationKey: "THIS_IS_LOGGED_STATUS_ERROR") {
     let settings = try SettingsStore().load()
+    guard !settings.isOnVacation() else { print("Urlop — monitoring wstrzymany."); return }
     let state = try await SnapshotStore().refresh(using: .live(settings: settings))
     announceStatusChange()
     print("\(state.checkedAt) miesiąc: \(nativeHours(state.month?.sourceSeconds ?? 0))/\(nativeHours(state.monthCapacity?.expectedSeconds ?? 0))h")
@@ -1367,6 +1437,7 @@ if let notify = arguments.firstIndex(of: "--notify"), arguments.indices.contains
 } else if arguments.contains("--agent-reminder") {
   runAgentMode(failureNotificationKey: "THIS_IS_LOGGED_REMINDER_ERROR") {
     let settings = try SettingsStore().load()
+    guard !settings.isOnVacation() else { print("Urlop — powiadomienia wstrzymane."); return }
     let decision = try await SnapshotStore().reminder(using: .live(settings: settings))
     announceStatusChange()
     let activity = settings.claudeIntegrationEnabled
@@ -1383,6 +1454,7 @@ if let notify = arguments.firstIndex(of: "--notify"), arguments.indices.contains
   print("--- \(TimeReportEngine.iso(Date())) ---")
   runAgentMode(failureNotificationKey: "THIS_IS_LOGGED_SYNC_ERROR") {
     let settings = try SettingsStore().load()
+    guard !settings.isOnVacation() else { print("Urlop — synchronizacja wstrzymana."); return }
     let engine = TimeReportEngine.live(settings: settings)
     let now = LocalDay(Date())
     let window = Reporting.synchronizationWindow(now: now)
