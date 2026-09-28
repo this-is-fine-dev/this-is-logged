@@ -91,7 +91,7 @@ Automatyzacja uzupełnia dzienne sumy w jednym zadaniu docelowym. Gdy Jira docel
 niż główna, dopisuje wyłącznie brakującą różnicę. Zgodne dni pomija, a większej wartości w Jirze
 docelowej nigdy nie nadpisuje samodzielnie.
 
-Natywne okno otwierane przy wykryciu różnic pokazuje wyłącznie kolizje wymagające decyzji:
+Sekcja docelowej Jiry w ustawieniach otwiera natywne okno synchronizacji. Pozwala ono wybrać dowolny dzień, uzupełnić bezpieczne braki i rozwiązać kolizje wymagające decyzji:
 
 - **Zostaw bez zmian** — nie zmieniaj celu;
 - **Dodaj czas ze źródła** — dopisz czas źródłowy do istniejącego;
@@ -156,7 +156,7 @@ Podsumowanie pokazuje nazwy, godziny i długość spotkań; cały ich czas trafi
 | Status | Co minutę odczytuje raporty i zapisuje stan dla menu. |
 | Przypomnienie | W dni robocze sprawdza puste i niepełne raporty. |
 | Menu | Uruchamia aplikację po zalogowaniu. |
-| Synchronizacja | Opcjonalnie kopiuje raporty o ustawionej godzinie. |
+| Synchronizacja | Opcjonalnie kopiuje raporty co 5 minut i po wybudzeniu. |
 
 Wszystkie zadania uruchamiają tę samą binarkę `ThisIsLogged`. Agent synchronizacji istnieje tylko
 po włączeniu drugiej Jiry.

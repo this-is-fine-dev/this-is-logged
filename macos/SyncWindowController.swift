@@ -2,8 +2,9 @@ import AppKit
 import ThisIsLoggedCore
 
 @MainActor final class SyncWindowController: NSWindowController {
-  private let selectedPeriod: String
+  private var selectedPeriod: String
   private let rows = FlippedSyncStackView()
+  private let dayPicker = NSDatePicker(frame: .zero)
   private let feedback = NSTextField(labelWithString: "Pobieram dane z obu instancji Jiry…")
   private let progress = NSProgressIndicator()
   private let executeButton = NSButton(title: "Synchronizuj", target: nil, action: nil)
@@ -21,7 +22,7 @@ import ThisIsLoggedCore
       backing: .buffered,
       defer: false
     )
-    panel.title = "Różnice do wyjaśnienia — \(period)"
+    panel.title = "Synchronizacja — \(period)"
     panel.toolbarStyle = .unifiedCompact
     panel.toolbar = NSToolbar(identifier: "synchronization")
     panel.titleVisibility = .hidden
@@ -56,12 +57,24 @@ import ThisIsLoggedCore
       root.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -18),
     ])
 
-    let title = NSTextField(labelWithString: "Różnice do wyjaśnienia")
+    let title = NSTextField(labelWithString: "Synchronizacja")
     title.font = .systemFont(ofSize: 17, weight: .semibold)
     root.addArrangedSubview(title)
-    let subtitle = NSTextField(labelWithString: "Automatyzacja uzupełnia bezpieczne braki. Tutaj decydujesz tylko o kolizjach.")
+    let subtitle = NSTextField(labelWithString: "Wybierz dowolny dzień albo zsynchronizuj bezpieczne braki z widocznego okresu.")
     subtitle.textColor = .secondaryLabelColor
     root.addArrangedSubview(subtitle)
+    dayPicker.datePickerElements = .yearMonthDay
+    dayPicker.datePickerStyle = .textFieldAndStepper
+    dayPicker.locale = Locale(identifier: "pl_PL")
+    dayPicker.dateValue = LocalDay(selectedPeriod)?.date ?? Date()
+    dayPicker.target = self
+    dayPicker.action = #selector(dayChanged)
+    let dayRow = NSStackView(views: [NSTextField(labelWithString: "Pokaż dzień"), dayPicker, NSView()])
+    dayRow.orientation = .horizontal
+    dayRow.alignment = .centerY
+    dayRow.spacing = 10
+    root.addArrangedSubview(dayRow)
+    dayRow.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true
 
     let scroll = NSScrollView()
     scroll.hasVerticalScroller = true
@@ -102,6 +115,9 @@ import ThisIsLoggedCore
     Task {
       do {
         let settings = try SettingsStore().load()
+        guard !settings.isOnVacation() else {
+          throw NSError(domain: "ThisIsLogged", code: 4, userInfo: [NSLocalizedDescriptionKey: "Synchronizacja jest wyłączona na czas urlopu."])
+        }
         let engine = TimeReportEngine.live(settings: settings)
         let plan = try await engine.syncPlan(from: range.0, to: range.1)
         self.engine = engine
@@ -117,18 +133,32 @@ import ThisIsLoggedCore
     progress.stopAnimation(nil)
     rows.arrangedSubviews.forEach { rows.removeArrangedSubview($0); $0.removeFromSuperview() }
     choices.removeAll()
+    let additions = plan.items.filter { $0.state == .add }
     let collisions = plan.items.filter { $0.state == .collision }
-    rows.addArrangedSubview(row(["Data", "Jira główna", "Cel", "Decyzja"], header: true))
-    for item in collisions {
-      let action = NSPopUpButton(frame: .zero, pullsDown: false)
-      if plan.cachedSourceAt != nil {
-        action.addItem(withTitle: "Zostaw bez zmian — źródło offline")
-        action.isEnabled = false
+    rows.addArrangedSubview(row(["Data", "Jira główna", "Cel", "Stan / decyzja"], header: true))
+    for item in plan.items {
+      let action: NSView
+      if item.state == .collision {
+        let popup = NSPopUpButton(frame: .zero, pullsDown: false)
+        if plan.cachedSourceAt != nil {
+          popup.addItem(withTitle: "Zostaw — źródło offline")
+          popup.isEnabled = false
+        } else if item.sourceSeconds == 0 {
+          popup.addItems(withTitles: ["Zostaw bez zmian", "Usuń wpisy z docelowej"])
+          popup.target = self
+          popup.action = #selector(choiceChanged)
+          choices[item.day] = popup
+        } else {
+          popup.addItems(withTitles: ["Zostaw bez zmian", "Dodaj czas ze źródła", "Ustaw jak w głównej Jirze"])
+          popup.target = self
+          popup.action = #selector(choiceChanged)
+          choices[item.day] = popup
+        }
+        action = popup
       } else {
-        action.addItems(withTitles: ["Zostaw bez zmian", "Dodaj czas ze źródła", "Ustaw jak w głównej Jirze"])
-        action.target = self
-        action.action = #selector(choiceChanged)
-        choices[item.day] = action
+        action = NSTextField(labelWithString: item.state == .add
+          ? "Uzupełnij o \(hours(item.secondsToAdd)) h"
+          : "Zsynchronizowane")
       }
       rows.addArrangedSubview(row([
         item.day.description,
@@ -136,15 +166,17 @@ import ThisIsLoggedCore
         item.targetSeconds == 0 ? "—" : "\(hours(item.targetSeconds)) h",
       ], control: action))
     }
-    if collisions.isEmpty {
-      rows.addArrangedSubview(NSTextField(labelWithString: "Brak różnic wymagających decyzji."))
+    if plan.items.isEmpty {
+      rows.addArrangedSubview(NSTextField(labelWithString: "Brak godzin w Jirze głównej dla wybranego okresu."))
     }
-    feedback.stringValue = collisions.isEmpty ? "Wszystko jest zsynchronizowane." : "Do wyjaśnienia: \(collisions.count)"
+    feedback.stringValue = additions.isEmpty && collisions.isEmpty
+      ? "Wszystko jest zsynchronizowane."
+      : "Do uzupełnienia: \(additions.count) · do wyjaśnienia: \(collisions.count)"
     if let timestamp = plan.cachedSourceAt {
       feedback.stringValue += " · źródło z pamięci: \(timestamp)"
     }
-    feedback.textColor = collisions.isEmpty ? .systemGreen : .systemOrange
-    executeButton.isEnabled = false
+    feedback.textColor = additions.isEmpty && collisions.isEmpty ? .systemGreen : .systemOrange
+    executeButton.isEnabled = !additions.isEmpty
     resizeDocument()
   }
 
@@ -170,16 +202,30 @@ import ThisIsLoggedCore
   }
 
   @objc private func choiceChanged() {
-    executeButton.isEnabled = choices.values.contains { $0.indexOfSelectedItem > 0 }
+    executeButton.isEnabled = plan?.items.contains { $0.state == .add } == true || choices.values.contains { $0.indexOfSelectedItem > 0 }
+  }
+
+  @objc private func dayChanged() {
+    selectedPeriod = LocalDay(dayPicker.dateValue).description
+    window?.title = "Synchronizacja — \(selectedPeriod)"
+    plan = nil
+    engine = nil
+    progress.startAnimation(nil)
+    feedback.textColor = .secondaryLabelColor
+    feedback.stringValue = "Pobieram dane z obu instancji Jiry…"
+    load()
   }
 
   @objc private func execute() {
     guard let engine, let plan else { return }
     var actions: [LocalDay: SyncAction] = [:]
     for (day, popup) in choices {
-      actions[day] = popup.indexOfSelectedItem == 2 ? .replace : popup.indexOfSelectedItem == 1 ? .add : .skip
+      let sourceIsEmpty = plan.items.first { $0.day == day }?.sourceSeconds == 0
+      actions[day] = popup.indexOfSelectedItem == 0 ? .skip
+        : sourceIsEmpty ? .replace
+        : popup.indexOfSelectedItem == 2 ? .replace : .add
     }
-    let writes = actions.values.filter { $0 != .skip }.count
+    let writes = plan.items.filter { $0.state == .add }.count + actions.values.filter { $0 != .skip }.count
     guard writes > 0 else {
       feedback.stringValue = "Nic nie wybrano do zapisania."
       return
@@ -249,7 +295,7 @@ import ThisIsLoggedCore
     rows.layoutSubtreeIfNeeded()
     let renderedViews = rows.arrangedSubviews.flatMap { ($0 as? NSStackView)?.arrangedSubviews ?? [] }
     precondition(
-      window?.minSize.width == 620 && executeButton.frame.height > 0 && rows.frame.width > 0 && rows.frame.height > 30 &&
+      window?.minSize.width == 620 && dayPicker.frame.height > 0 && executeButton.frame.height > 0 && rows.frame.width > 0 && rows.frame.height > 30 &&
         renderedViews.count == 8 && renderedViews.allSatisfy { $0.frame.height > 0 },
       "Okno synchronizacji ma nieprawidłowy układ"
     )
@@ -258,7 +304,7 @@ import ThisIsLoggedCore
     precondition(executeButton.isEnabled, "Wybór decyzji nie aktywuje zapisu")
     let topUpPlan = try! JSONDecoder().decode(SyncPlan.self, from: Data(#"{"from":"2026-09-07","to":"2026-09-07","targetIssue":"AUT-1","items":[{"day":"2026-09-07","sourceSeconds":28800,"targetSeconds":14400,"issueKeys":["RPR-1"],"targetWorklogIDs":["old-1"],"state":"add"}]}"#.utf8))
     render(topUpPlan)
-    precondition(rows.arrangedSubviews.count == 2 && !executeButton.isEnabled, "Bezpieczne uzupełnienia nie powinny wymagać decyzji")
+    precondition(rows.arrangedSubviews.count == 2 && executeButton.isEnabled, "Bezpieczne uzupełnienia powinny być gotowe do zapisu")
     let syncedPlan = try! JSONDecoder().decode(SyncPlan.self, from: Data(#"{"from":"2026-09-07","to":"2026-09-07","targetIssue":"AUT-1","items":[{"day":"2026-09-07","sourceSeconds":28800,"targetSeconds":28800,"issueKeys":["RPR-1"],"targetWorklogIDs":["old-1","new-1"],"state":"synced"}]}"#.utf8))
     didExecute(SyncResult(writtenDays: 1, writtenSeconds: 14400, collisionsSkipped: 0), refreshedPlan: syncedPlan)
     precondition(

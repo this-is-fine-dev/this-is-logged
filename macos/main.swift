@@ -285,6 +285,7 @@ private func period() -> String {
   private let targetEmailField = NSTextField(frame: .zero)
   private let targetTokenField = NSSecureTextField(frame: .zero)
   private let targetIssueField = NSTextField(frame: .zero)
+  private lazy var syncNowButton = NSButton(title: "Synchronizuj…", target: self, action: #selector(showSynchronization))
   private let commentKeysToggle = NSSwitch(frame: .zero)
   private let syncFrequencyLabel = NSTextField(labelWithString: "Co 5 minut i po wybudzeniu")
   private let reminderTimeField = NSTextField(frame: .zero)
@@ -533,7 +534,8 @@ private func period() -> String {
     syncToggle.action = #selector(toggleSynchronization)
     targetBox = settingsSection("JIRA DOCELOWA", [
       ("URL", targetURLField), ("Email", targetEmailField), ("Token", targetTokenField),
-      ("Zadanie", targetIssueField), ("Automatyczny zapis", syncFrequencyLabel), ("Klucze w komentarzu", commentKeysToggle),
+      ("Zadanie", targetIssueField), ("Automatyczny zapis", syncFrequencyLabel),
+      ("Ręcznie", syncNowButton), ("Klucze w komentarzu", commentKeysToggle),
     ])
 
     for field in [reminderTimeField, workdayHoursField] {
@@ -1052,6 +1054,8 @@ private func period() -> String {
 
   @objc private func resolveCollisions() { openInteractive(period()) }
 
+  @objc private func showSynchronization() { openInteractive(period()) }
+
   private func openInteractive(_ selectedPeriod: String) {
     syncWindow = SyncWindowController(period: selectedPeriod) { [weak self] in self?.refreshReports() }
     syncWindow?.showWindow(nil)
@@ -1215,13 +1219,14 @@ private func period() -> String {
       .appendingPathComponent("Library/LaunchAgents/\(statusLabel).plist")
     guard configurationComplete(readSettings()), let executable = Bundle.main.executableURL else { return }
     let installed = (try? String(contentsOf: agent, encoding: .utf8))?.contains(executable.path) == true
-    let retriesInstalled = !configuredSyncEnabled || LaunchdManager().synchronizationScheduleInstalled()
-    guard !installed || !retriesInstalled else { return }
+    let manager = LaunchdManager()
+    let retriesInstalled = !configuredSyncEnabled || manager.synchronizationScheduleInstalled()
+    guard !installed || !retriesInstalled || !manager.automationAgentsLoaded(synchronizationEnabled: configuredSyncEnabled) else { return }
     let appURL = Bundle.main.bundleURL
     Task.detached {
       do {
         let settings = try SettingsStore().load()
-        try LaunchdManager().reconcile(settings: settings, executable: executable, app: appURL)
+        try manager.reconcile(settings: settings, executable: executable, app: appURL)
       } catch {
         fputs("migration: \(error.localizedDescription)\n", stderr)
       }
@@ -1278,7 +1283,7 @@ private func period() -> String {
       return bounds.contains(frame) && frame.height > 0 && !view.isHiddenOrHasHiddenAncestor
     }
     let sourceVisible = visible(sourceURLField, on: 0)
-    let syncVisible = !syncEnabled || visible(syncFrequencyLabel, on: 0)
+    let syncVisible = !syncEnabled || (visible(syncFrequencyLabel, on: 0) && visible(syncNowButton, on: 0))
     let targetVisibilityIsCorrect = targetBox.isHidden == !syncEnabled
     let vacationVisible = visible(vacationToggle, on: 1) && visible(vacationEndPicker, on: 1)
     let automationVisible = visible(reminderTimeField, on: 1) && visible(workdayHoursField, on: 1)

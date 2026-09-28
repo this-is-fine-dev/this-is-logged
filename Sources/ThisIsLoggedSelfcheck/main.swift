@@ -423,6 +423,7 @@ Task.detached {
       LocalDay("2026-09-01")!: DayTotal(seconds: 3600, worklogIDs: ["old-1"]),
       LocalDay("2026-09-02")!: DayTotal(seconds: 28_800, worklogIDs: ["old-2"]),
       LocalDay("2026-09-03")!: DayTotal(seconds: 7200, worklogIDs: ["old-3"]),
+      LocalDay("2026-09-04")!: DayTotal(seconds: 3600, worklogIDs: ["old-4"]),
     ])
     let engineSettings = AppSettings(
       source: JiraCredentials(url: URL(string: "https://source.example.com")!, token: "x"),
@@ -438,13 +439,18 @@ Task.detached {
     precondition(reminder.missingDays.map(\.date.description) == ["2026-09-01", "2026-09-03"])
     precondition(reminder.message?.contains("Dzisiaj masz 1.00") == true)
 
-    let plan = try await engine.syncPlan(from: LocalDay("2026-09-01")!, to: LocalDay("2026-09-03")!)
-    precondition(plan.items.map(\.state) == [.add, .synced, .collision])
+    let plan = try await engine.syncPlan(from: LocalDay("2026-09-01")!, to: LocalDay("2026-09-04")!)
+    precondition(plan.items.map(\.state) == [.add, .synced, .collision, .collision])
+    precondition(plan.items.last?.sourceSeconds == 0, "Dzień istniejący tylko w celu musi być widoczną kolizją")
     let automatic = try await engine.execute(plan)
-    precondition(automatic == SyncResult(writtenDays: 1, writtenSeconds: 3600, collisionsSkipped: 1))
+    precondition(automatic == SyncResult(writtenDays: 1, writtenSeconds: 3600, collisionsSkipped: 2))
     let interactive = try await engine.execute(plan, actions: [LocalDay("2026-09-03")!: .replace])
-    let deleted = await targetJira.deleted
-    precondition(interactive.writtenDays == 2 && deleted == ["old-3"])
+    let deletedAfterInteractive = await targetJira.deleted
+    precondition(interactive.writtenDays == 2 && deletedAfterInteractive == ["old-3"])
+    let targetOnlyPlan = try await engine.syncPlan(from: LocalDay("2026-09-04")!, to: LocalDay("2026-09-04")!)
+    let cleared = try await engine.execute(targetOnlyPlan, actions: [LocalDay("2026-09-04")!: .replace])
+    let deletedAfterClearing = await targetJira.deleted
+    precondition(cleared.writtenDays == 1 && cleared.writtenSeconds == 0 && deletedAfterClearing == ["old-3", "old-4"])
 
     let cacheDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     let cache = SnapshotStore(file: cacheDirectory.appendingPathComponent("status.json"))

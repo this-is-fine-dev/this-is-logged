@@ -194,8 +194,9 @@ public struct TimeReportEngine: Sendable {
     }
     let targetUser = try await target.currentUser()
     let targetValues = try await target.issueWorklogs(issue: settings.targetIssue, userID: targetUser.id)
-    let items = sourceValues.keys.sorted().map { day in
-      let source = sourceValues[day]!
+    let days = Set(sourceValues.keys).union(targetValues.keys.filter { $0 >= from && $0 <= to })
+    let items = days.sorted().map { day in
+      let source = sourceValues[day, default: DayTotal()]
       let destination = targetValues[day, default: DayTotal()]
       let state: SyncState = destination.seconds < source.seconds ? .add : destination.seconds == source.seconds ? .synced : .collision
       return SyncItem(
@@ -231,7 +232,7 @@ public struct TimeReportEngine: Sendable {
         ? item.secondsToAdd
         : item.sourceSeconds
       let comment = settings.commentIssueKeys ? item.issueKeys.joined(separator: ", ") : nil
-      try await target.addWorklog(issue: plan.targetIssue, day: item.day, seconds: seconds, comment: comment)
+      if seconds > 0 { try await target.addWorklog(issue: plan.targetIssue, day: item.day, seconds: seconds, comment: comment) }
       writtenDays += 1
       writtenSeconds += seconds
     }

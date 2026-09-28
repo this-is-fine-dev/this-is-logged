@@ -28,6 +28,12 @@ public final class LaunchdManager: @unchecked Sendable {
     }
   }
 
+  public func automationAgentsLoaded(synchronizationEnabled: Bool) -> Bool {
+    let expected = [Self.labels.menu, Self.labels.reminder, Self.labels.status] + (synchronizationEnabled ? [Self.labels.sync] : [])
+    let domain = "gui/\(getuid())"
+    return expected.allSatisfy { (try? launchctl(["print", "\(domain)/\($0)"])) != nil }
+  }
+
   public func reconcile(settings: AppSettings, executable: URL, app: URL) throws {
     let agents = home.appendingPathComponent("Library/LaunchAgents", isDirectory: true)
     let logs = home.appendingPathComponent("Library/Logs", isDirectory: true)

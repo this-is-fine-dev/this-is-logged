@@ -74,6 +74,11 @@ if rg -q 'menu\.autoenablesItems = false' "$PROJECT_ROOT/macos/main.swift"; then
   exit 1
 fi
 
+if ! rg -q 'NSButton\(title: "Synchronizuj…"[^\n]+#selector\(showSynchronization\)' "$PROJECT_ROOT/macos/main.swift"; then
+  echo "enabled Jira synchronization must remain reachable from the settings window" >&2
+  exit 1
+fi
+
 if rg -q 'action: #selector\(SPUStandardUpdaterController\.checkForUpdates' "$PROJECT_ROOT/macos/main.swift"; then
   echo "direct Sparkle action loses the first click while the updater is starting" >&2
   exit 1
