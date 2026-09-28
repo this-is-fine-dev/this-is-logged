@@ -29,7 +29,7 @@ for window_source in main.swift SyncWindowController.swift; do
 done
 
 if rg -q 'NSWindowController|NSPanel\(' "$PROJECT_ROOT/macos/ClaudeActivityWindowController.swift" ||
-   ! rg -Uq 'private func showClaudeActivity\(\) \{\n    showSettings\(\)\n    activateSettingsPage\(2\)' "$PROJECT_ROOT/macos/main.swift"; then
+   ! rg -Uq 'private func showClaudeActivity\(\) \{\n    showSettings\(\)\n    activateSettingsPage\(3\)' "$PROJECT_ROOT/macos/main.swift"; then
   echo "Claude activity must be embedded in the settings window" >&2
   exit 1
 fi

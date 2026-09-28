@@ -461,6 +461,7 @@ private func period() -> String {
     sidebarStack.setCustomSpacing(22, after: brand)
     for (index, item) in [
       ("Połączenia", "link"),
+      ("Synchronizacja", "arrow.triangle.2.circlepath"),
       ("Automatyzacja", "gearshape.2"),
       ("Analiza dnia", "chart.bar.xaxis"),
     ].enumerated() {
@@ -534,8 +535,7 @@ private func period() -> String {
     syncToggle.action = #selector(toggleSynchronization)
     targetBox = settingsSection("JIRA DOCELOWA", [
       ("URL", targetURLField), ("Email", targetEmailField), ("Token", targetTokenField),
-      ("Zadanie", targetIssueField), ("Automatyczny zapis", syncFrequencyLabel),
-      ("Ręcznie", syncNowButton), ("Klucze w komentarzu", commentKeysToggle),
+      ("Zadanie", targetIssueField), ("Automatyczny zapis", syncFrequencyLabel), ("Klucze w komentarzu", commentKeysToggle),
     ])
 
     for field in [reminderTimeField, workdayHoursField] {
@@ -569,8 +569,13 @@ private func period() -> String {
         ("Adres", sourceURLField), ("Email", sourceEmailField), ("Token API", sourceTokenField),
       ]),
       settingsNote("To jest główne źródło raportów. Monitoring działa niezależnie od opcjonalnej synchronizacji."),
-      settingsSection("SYNCHRONIZACJA", [("Kopiuj do drugiej Jiry", syncToggle)]),
+    ])
+    addSettingsPage(title: "Synchronizacja", views: [
+      settingsSection("SYNCHRONIZACJA", [
+        ("Kopiuj do drugiej Jiry", syncToggle), ("Ręcznie", syncNowButton),
+      ]),
       targetBox,
+      settingsNote("Braki są uzupełniane automatycznie. Ręczne okno pozwala wybrać dowolny dzień i rozwiązać kolizje."),
     ])
     analysisAssignmentBox = settingsSection("PRZYPISANIE", [
       ("Zadanie zbiorcze", catchAllIssueField), ("Zasada", claudeDescription),
@@ -654,7 +659,7 @@ private func period() -> String {
 
   private func activateSettingsPage(_ index: Int) {
     settingsTabView.selectTabViewItem(at: index)
-    if index == 2 { activityController?.refresh() }
+    if index == 3 { activityController?.refresh() }
     for button in settingsSidebarButtons {
       let selected = button.tag == index
       button.layer?.backgroundColor = selected ? NSColor.controlAccentColor.cgColor : NSColor.clear.cgColor
@@ -761,6 +766,7 @@ private func period() -> String {
 
   @objc private func toggleSynchronization() {
     targetBox.isHidden = syncToggle.state != .on
+    syncNowButton.isEnabled = syncToggle.state == .on
   }
 
   @objc private func toggleVacation() {
@@ -1063,7 +1069,7 @@ private func period() -> String {
 
   @objc private func showClaudeActivity() {
     showSettings()
-    activateSettingsPage(2)
+    activateSettingsPage(3)
   }
 
   @objc private func saveSettings() {
@@ -1282,24 +1288,29 @@ private func period() -> String {
       let frame = panel.contentView!.convert(view.bounds, from: view)
       return bounds.contains(frame) && frame.height > 0 && !view.isHiddenOrHasHiddenAncestor
     }
+    activateSettingsPage(1)
+    let synchronizationScroll = targetBox.enclosingScrollView!
+    synchronizationScroll.contentView.scroll(to: .zero)
+    panel.contentView?.layoutSubtreeIfNeeded()
+    let syncActionFrame = panel.contentView!.convert(syncNowButton.bounds, from: syncNowButton)
+    let syncActionInitiallyVisible = !syncEnabled || bounds.contains(syncActionFrame)
     let sourceVisible = visible(sourceURLField, on: 0)
-    let syncVisible = !syncEnabled || (visible(syncFrequencyLabel, on: 0) && visible(syncNowButton, on: 0))
+    let syncVisible = !syncEnabled || (visible(syncFrequencyLabel, on: 1) && visible(syncNowButton, on: 1))
     let targetVisibilityIsCorrect = targetBox.isHidden == !syncEnabled
-    let vacationVisible = visible(vacationToggle, on: 1) && visible(vacationEndPicker, on: 1)
-    let automationVisible = visible(reminderTimeField, on: 1) && visible(workdayHoursField, on: 1)
-    let analysisVisible = visible(calendarPopup, on: 1) && visible(catchAllIssueField, on: 1)
-    let activityVisible = activityController.map { visible($0.view, on: 2) } ?? false
+    let vacationVisible = visible(vacationToggle, on: 2) && visible(vacationEndPicker, on: 2)
+    let automationVisible = visible(reminderTimeField, on: 2) && visible(workdayHoursField, on: 2)
+    let analysisVisible = visible(calendarPopup, on: 2) && visible(catchAllIssueField, on: 2)
+    let activityVisible = activityController.map { visible($0.view, on: 3) } ?? false
     activateSettingsPage(0)
     panel.contentView?.layoutSubtreeIfNeeded()
     let saveFrame = panel.contentView!.convert(saveButton.bounds, from: saveButton)
-    let connectionsScroll = targetBox.enclosingScrollView!
-    let connectionsFrame = panel.contentView!.convert(connectionsScroll.bounds, from: connectionsScroll)
+    let synchronizationFrame = panel.contentView!.convert(synchronizationScroll.bounds, from: synchronizationScroll)
     precondition(
-      settingsTabView.numberOfTabViewItems == 3 && settingsSidebarButtons.count == 3 &&
+      settingsTabView.numberOfTabViewItems == 4 && settingsSidebarButtons.count == 4 &&
         settingsSidebarButtons.allSatisfy { $0.frame.width > 0 && (38...39).contains($0.frame.height) } &&
-        sourceVisible && syncVisible && targetVisibilityIsCorrect && vacationVisible && automationVisible && analysisVisible && activityVisible &&
-        bounds.contains(saveFrame) && saveFrame.height > 0 && !connectionsFrame.intersects(saveFrame) &&
-        connectionsScroll.hasVerticalScroller &&
+        sourceVisible && syncVisible && syncActionInitiallyVisible && targetVisibilityIsCorrect && vacationVisible && automationVisible && analysisVisible && activityVisible &&
+        bounds.contains(saveFrame) && saveFrame.height > 0 && !synchronizationFrame.intersects(saveFrame) &&
+        synchronizationScroll.hasVerticalScroller &&
         !panel.hidesOnDeactivate && panel.delegate === self,
       "Opcje są poza widocznym obszarem"
     )

@@ -91,7 +91,7 @@ Automatyzacja uzupełnia dzienne sumy w jednym zadaniu docelowym. Gdy Jira docel
 niż główna, dopisuje wyłącznie brakującą różnicę. Zgodne dni pomija, a większej wartości w Jirze
 docelowej nigdy nie nadpisuje samodzielnie.
 
-Sekcja docelowej Jiry w ustawieniach otwiera natywne okno synchronizacji. Pozwala ono wybrać dowolny dzień, uzupełnić bezpieczne braki i rozwiązać kolizje wymagające decyzji:
+Sekcja **Synchronizacja** w ustawieniach otwiera natywne okno synchronizacji. Pozwala ono wybrać dowolny dzień, uzupełnić bezpieczne braki i rozwiązać kolizje wymagające decyzji:
 
 - **Zostaw bez zmian** — nie zmieniaj celu;
 - **Dodaj czas ze źródła** — dopisz czas źródłowy do istniejącego;
