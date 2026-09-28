@@ -285,7 +285,6 @@ private func period() -> String {
   private let targetEmailField = NSTextField(frame: .zero)
   private let targetTokenField = NSSecureTextField(frame: .zero)
   private let targetIssueField = NSTextField(frame: .zero)
-  private lazy var syncNowButton = NSButton(title: "Synchronizuj…", target: self, action: #selector(showSynchronization))
   private let commentKeysToggle = NSSwitch(frame: .zero)
   private let syncFrequencyLabel = NSTextField(labelWithString: "Co 5 minut i po wybudzeniu")
   private let reminderTimeField = NSTextField(frame: .zero)
@@ -305,7 +304,7 @@ private func period() -> String {
   private var analysisAssignmentBox: NSView!
   private var saveButton: NSButton!
   private var panel: NSPanel!
-  private var syncWindow: SyncWindowController?
+  private var synchronizationController: SyncViewController?
   private var activityController: ClaudeActivityViewController?
   private var timer: Timer?
   private var statusObserver: NSObjectProtocol?
@@ -565,18 +564,22 @@ private func period() -> String {
     }
 
     addSettingsPage(title: "Połączenia", views: [
-      settingsSection("POŁĄCZENIE", [
+      settingsSection("JIRA ŹRÓDŁOWA", [
         ("Adres", sourceURLField), ("Email", sourceEmailField), ("Token API", sourceTokenField),
       ]),
       settingsNote("To jest główne źródło raportów. Monitoring działa niezależnie od opcjonalnej synchronizacji."),
-    ])
-    addSettingsPage(title: "Synchronizacja", views: [
-      settingsSection("SYNCHRONIZACJA", [
-        ("Kopiuj do drugiej Jiry", syncToggle), ("Ręcznie", syncNowButton),
-      ]),
+      settingsSection("DRUGA JIRA", [("Kopiuj do drugiej Jiry", syncToggle)]),
       targetBox,
-      settingsNote("Braki są uzupełniane automatycznie. Ręczne okno pozwala wybrać dowolny dzień i rozwiązać kolizje."),
     ])
+    let synchronizationController = SyncViewController(period: LocalDay(Date()).description) { [weak self] in
+      guard !arguments.contains(where: { $0.contains("selfcheck") }) else { return }
+      self?.refreshReports()
+    }
+    self.synchronizationController = synchronizationController
+    let synchronizationItem = NSTabViewItem(identifier: "Synchronizacja")
+    synchronizationItem.label = "Synchronizacja"
+    synchronizationItem.view = synchronizationController.view
+    settingsTabView.addTabViewItem(synchronizationItem)
     analysisAssignmentBox = settingsSection("PRZYPISANIE", [
       ("Zadanie zbiorcze", catchAllIssueField), ("Zasada", claudeDescription),
     ])
@@ -659,7 +662,15 @@ private func period() -> String {
 
   private func activateSettingsPage(_ index: Int) {
     settingsTabView.selectTabViewItem(at: index)
-    if index == 3 { activityController?.refresh() }
+    let browsing = index == 1 || index == 3
+    saveButton.isHidden = browsing
+    saveButton.keyEquivalent = browsing ? "" : "\r"
+    settingsFeedback.isHidden = browsing
+    settingsProgress.isHidden = browsing
+    if !arguments.contains(where: { $0.contains("selfcheck") }) {
+      if index == 1 { synchronizationController?.refresh() }
+      if index == 3 { activityController?.refresh() }
+    }
     for button in settingsSidebarButtons {
       let selected = button.tag == index
       button.layer?.backgroundColor = selected ? NSColor.controlAccentColor.cgColor : NSColor.clear.cgColor
@@ -766,7 +777,6 @@ private func period() -> String {
 
   @objc private func toggleSynchronization() {
     targetBox.isHidden = syncToggle.state != .on
-    syncNowButton.isEnabled = syncToggle.state == .on
   }
 
   @objc private func toggleVacation() {
@@ -1060,11 +1070,10 @@ private func period() -> String {
 
   @objc private func resolveCollisions() { openInteractive(period()) }
 
-  @objc private func showSynchronization() { openInteractive(period()) }
-
   private func openInteractive(_ selectedPeriod: String) {
-    syncWindow = SyncWindowController(period: selectedPeriod) { [weak self] in self?.refreshReports() }
-    syncWindow?.showWindow(nil)
+    showSettings()
+    synchronizationController?.showPeriod(selectedPeriod)
+    activateSettingsPage(1)
   }
 
   @objc private func showClaudeActivity() {
@@ -1288,14 +1297,16 @@ private func period() -> String {
       let frame = panel.contentView!.convert(view.bounds, from: view)
       return bounds.contains(frame) && frame.height > 0 && !view.isHiddenOrHasHiddenAncestor
     }
-    activateSettingsPage(1)
-    let synchronizationScroll = targetBox.enclosingScrollView!
-    synchronizationScroll.contentView.scroll(to: .zero)
-    panel.contentView?.layoutSubtreeIfNeeded()
-    let syncActionFrame = panel.contentView!.convert(syncNowButton.bounds, from: syncNowButton)
-    let syncActionInitiallyVisible = !syncEnabled || bounds.contains(syncActionFrame)
+    let connectionsPage = settingsTabView.tabViewItems[0].view!
+    precondition(sourceURLField.isDescendant(of: connectionsPage) && targetURLField.isDescendant(of: connectionsPage),
+                 "Obie Jiry muszą być skonfigurowane w Połączeniach")
+    let connectionsScroll = targetBox.enclosingScrollView!
     let sourceVisible = visible(sourceURLField, on: 0)
-    let syncVisible = !syncEnabled || (visible(syncFrequencyLabel, on: 1) && visible(syncNowButton, on: 1))
+    let syncVisible = !syncEnabled || visible(syncFrequencyLabel, on: 0)
+    let synchronizationVisible = synchronizationController.map { visible($0.view, on: 1) } ?? false
+    precondition(saveButton.isHidden && settingsFeedback.isHidden,
+                 "Przegląd synchronizacji nie może pokazywać zapisu konfiguracji")
+    synchronizationController?.layoutSelfcheck()
     let targetVisibilityIsCorrect = targetBox.isHidden == !syncEnabled
     let vacationVisible = visible(vacationToggle, on: 2) && visible(vacationEndPicker, on: 2)
     let automationVisible = visible(reminderTimeField, on: 2) && visible(workdayHoursField, on: 2)
@@ -1304,13 +1315,13 @@ private func period() -> String {
     activateSettingsPage(0)
     panel.contentView?.layoutSubtreeIfNeeded()
     let saveFrame = panel.contentView!.convert(saveButton.bounds, from: saveButton)
-    let synchronizationFrame = panel.contentView!.convert(synchronizationScroll.bounds, from: synchronizationScroll)
+    let connectionsFrame = panel.contentView!.convert(connectionsScroll.bounds, from: connectionsScroll)
     precondition(
       settingsTabView.numberOfTabViewItems == 4 && settingsSidebarButtons.count == 4 &&
         settingsSidebarButtons.allSatisfy { $0.frame.width > 0 && (38...39).contains($0.frame.height) } &&
-        sourceVisible && syncVisible && syncActionInitiallyVisible && targetVisibilityIsCorrect && vacationVisible && automationVisible && analysisVisible && activityVisible &&
-        bounds.contains(saveFrame) && saveFrame.height > 0 && !synchronizationFrame.intersects(saveFrame) &&
-        synchronizationScroll.hasVerticalScroller &&
+        sourceVisible && syncVisible && synchronizationVisible && targetVisibilityIsCorrect && vacationVisible && automationVisible && analysisVisible && activityVisible &&
+        bounds.contains(saveFrame) && saveFrame.height > 0 && !connectionsFrame.intersects(saveFrame) &&
+        connectionsScroll.hasVerticalScroller &&
         !panel.hidesOnDeactivate && panel.delegate === self,
       "Opcje są poza widocznym obszarem"
     )
@@ -1413,7 +1424,7 @@ if let notify = arguments.firstIndex(of: "--notify"), arguments.indices.contains
   withExtendedLifetime(delegate) {}
 } else if arguments.contains("--sync-layout-selfcheck") {
   _ = NSApplication.shared
-  let controller = SyncWindowController(period: period()) {}
+  let controller = SyncViewController(period: period()) {}
   controller.layoutSelfcheck()
   withExtendedLifetime(controller) {}
 } else if arguments.contains("--activity-layout-selfcheck") {

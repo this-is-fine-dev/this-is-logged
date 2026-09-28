@@ -1,10 +1,14 @@
 import AppKit
 import ThisIsLoggedCore
 
-@MainActor final class SyncWindowController: NSWindowController {
+@MainActor final class SyncViewController: NSViewController {
   private var selectedPeriod: String
   private let rows = FlippedSyncStackView()
   private let dayPicker = NSDatePicker(frame: .zero)
+  private let refreshButton = NSButton(title: "Odśwież", target: nil, action: nil)
+  private let periodLabel = NSTextField(labelWithString: "")
+  private var loadTask: Task<Void, Never>?
+  private var writing = false
   private let feedback = NSTextField(labelWithString: "Pobieram dane z obu instancji Jiry…")
   private let progress = NSProgressIndicator()
   private let executeButton = NSButton(title: "Synchronizuj", target: nil, action: nil)
@@ -16,34 +20,39 @@ import ThisIsLoggedCore
   init(period: String, completion: @escaping () -> Void) {
     selectedPeriod = period
     self.completion = completion
-    let panel = NSPanel(
-      contentRect: NSRect(x: 0, y: 0, width: 680, height: 560),
-      styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
-      backing: .buffered,
-      defer: false
-    )
-    panel.title = "Synchronizacja — \(period)"
-    panel.toolbarStyle = .unifiedCompact
-    panel.toolbar = NSToolbar(identifier: "synchronization")
-    panel.titleVisibility = .hidden
-    panel.titlebarAppearsTransparent = true
-    panel.minSize = NSSize(width: 620, height: 420)
-    super.init(window: panel)
-    buildUI()
+    super.init(nibName: nil, bundle: nil)
   }
 
   @available(*, unavailable) required init?(coder: NSCoder) { fatalError() }
 
-  override func showWindow(_ sender: Any?) {
-    super.showWindow(sender)
-    window?.center()
-    NSApplication.shared.activate(ignoringOtherApps: true)
-    window?.makeKeyAndOrderFront(nil)
+  override func loadView() {
+    view = NSView(frame: NSRect(x: 0, y: 0, width: 540, height: 500))
+    buildUI()
+  }
+
+  func showPeriod(_ period: String) {
+    guard !writing else { return }
+    selectedPeriod = period
+    dayPicker.dateValue = LocalDay(period)?.date ?? Date()
+  }
+
+  @objc func refresh() {
+    guard !writing else { return }
+    loadTask?.cancel()
+    plan = nil
+    engine = nil
+    executeButton.isEnabled = false
+    choices.removeAll()
+    rows.arrangedSubviews.forEach { rows.removeArrangedSubview($0); $0.removeFromSuperview() }
+    periodLabel.stringValue = "Okres: \(selectedPeriod)"
+    progress.startAnimation(nil)
+    feedback.textColor = .secondaryLabelColor
+    feedback.stringValue = "Pobieram dane z obu instancji Jiry…"
     load()
   }
 
   private func buildUI() {
-    guard let content = window?.contentView else { return }
+    let content = view
     let root = NSStackView()
     root.orientation = .vertical
     root.alignment = .leading
@@ -51,30 +60,36 @@ import ThisIsLoggedCore
     root.translatesAutoresizingMaskIntoConstraints = false
     content.addSubview(root)
     NSLayoutConstraint.activate([
-      root.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 20),
-      root.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -20),
-      root.topAnchor.constraint(equalTo: content.safeAreaLayoutGuide.topAnchor, constant: 18),
-      root.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -18),
+      root.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 10),
+      root.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -10),
+      root.topAnchor.constraint(equalTo: content.topAnchor, constant: 16),
+      root.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -10),
     ])
 
     let title = NSTextField(labelWithString: "Synchronizacja")
     title.font = .systemFont(ofSize: 17, weight: .semibold)
     root.addArrangedSubview(title)
-    let subtitle = NSTextField(labelWithString: "Wybierz dowolny dzień albo zsynchronizuj bezpieczne braki z widocznego okresu.")
+    let subtitle = NSTextField(wrappingLabelWithString: "Porównaj godziny w obu Jirach i uzupełnij braki wybranego dnia.")
     subtitle.textColor = .secondaryLabelColor
     root.addArrangedSubview(subtitle)
+    subtitle.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true
     dayPicker.datePickerElements = .yearMonthDay
     dayPicker.datePickerStyle = .textFieldAndStepper
     dayPicker.locale = Locale(identifier: "pl_PL")
     dayPicker.dateValue = LocalDay(selectedPeriod)?.date ?? Date()
     dayPicker.target = self
     dayPicker.action = #selector(dayChanged)
-    let dayRow = NSStackView(views: [NSTextField(labelWithString: "Pokaż dzień"), dayPicker, NSView()])
+    refreshButton.target = self
+    refreshButton.action = #selector(refresh)
+    let dayRow = NSStackView(views: [NSTextField(labelWithString: "Pokaż dzień"), dayPicker, NSView(), refreshButton])
     dayRow.orientation = .horizontal
     dayRow.alignment = .centerY
     dayRow.spacing = 10
     root.addArrangedSubview(dayRow)
     dayRow.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true
+    periodLabel.font = .systemFont(ofSize: 12)
+    periodLabel.stringValue = "Okres: \(selectedPeriod)"
+    root.addArrangedSubview(periodLabel)
 
     let scroll = NSScrollView()
     scroll.hasVerticalScroller = true
@@ -83,17 +98,18 @@ import ThisIsLoggedCore
     rows.orientation = .vertical
     rows.alignment = .leading
     rows.spacing = 6
-    rows.frame = NSRect(x: 0, y: 0, width: 620, height: 1)
+    rows.frame = NSRect(x: 0, y: 0, width: 500, height: 1)
     rows.edgeInsets = NSEdgeInsets(top: 10, left: 10, bottom: 10, right: 10)
     rows.autoresizingMask = [.width]
     scroll.documentView = rows
     root.addArrangedSubview(scroll)
     scroll.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true
-    scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 270).isActive = true
+    scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 180).isActive = true
 
     feedback.textColor = .secondaryLabelColor
     feedback.lineBreakMode = .byWordWrapping
     feedback.maximumNumberOfLines = 2
+    feedback.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
     progress.style = .spinning
     progress.controlSize = .small
     progress.startAnimation(nil)
@@ -112,24 +128,31 @@ import ThisIsLoggedCore
       if plan == nil { show(error: "Nieprawidłowy okres: \(selectedPeriod)") }
       return
     }
-    Task {
+    loadTask = Task {
       do {
         let settings = try SettingsStore().load()
+        guard settings.synchronizationEnabled else {
+          show(error: "Połącz drugą Jirę w zakładce Połączenia i zapisz ustawienia.")
+          return
+        }
         guard !settings.isOnVacation() else {
           throw NSError(domain: "ThisIsLogged", code: 4, userInfo: [NSLocalizedDescriptionKey: "Synchronizacja jest wyłączona na czas urlopu."])
         }
         let engine = TimeReportEngine.live(settings: settings)
         let plan = try await engine.syncPlan(from: range.0, to: range.1)
+        try Task.checkCancellation()
         self.engine = engine
         self.plan = plan
         render(plan)
       } catch {
+        guard !Task.isCancelled else { return }
         show(error: error.localizedDescription)
       }
     }
   }
 
   private func render(_ plan: SyncPlan) {
+    self.plan = plan
     progress.stopAnimation(nil)
     rows.arrangedSubviews.forEach { rows.removeArrangedSubview($0); $0.removeFromSuperview() }
     choices.removeAll()
@@ -169,7 +192,7 @@ import ThisIsLoggedCore
     if plan.items.isEmpty {
       rows.addArrangedSubview(NSTextField(labelWithString: "Brak godzin w Jirze głównej dla wybranego okresu."))
     }
-    feedback.stringValue = additions.isEmpty && collisions.isEmpty
+    feedback.stringValue = plan.items.isEmpty ? "Brak wpisów w obu Jirach." : additions.isEmpty && collisions.isEmpty
       ? "Wszystko jest zsynchronizowane."
       : "Do uzupełnienia: \(additions.count) · do wyjaśnienia: \(collisions.count)"
     if let timestamp = plan.cachedSourceAt {
@@ -182,7 +205,7 @@ import ThisIsLoggedCore
 
   private func resizeDocument() {
     rows.layoutSubtreeIfNeeded()
-    rows.setFrameSize(NSSize(width: max(620, rows.frame.width), height: rows.fittingSize.height))
+    rows.setFrameSize(NSSize(width: rows.frame.width, height: rows.fittingSize.height))
   }
 
   private func row(_ values: [String], control: NSView? = nil, header: Bool = false) -> NSView {
@@ -194,8 +217,8 @@ import ThisIsLoggedCore
     let row = NSStackView(views: views)
     row.orientation = .horizontal
     row.alignment = .centerY
-    row.spacing = 12
-    let widths: [CGFloat] = [105, 120, 120]
+    row.spacing = 8
+    let widths: [CGFloat] = [76, 76, 60]
     for (index, width) in widths.enumerated() where index < views.count { views[index].widthAnchor.constraint(equalToConstant: width).isActive = true }
     if let control { control.widthAnchor.constraint(equalToConstant: 205).isActive = true }
     return row
@@ -207,13 +230,7 @@ import ThisIsLoggedCore
 
   @objc private func dayChanged() {
     selectedPeriod = LocalDay(dayPicker.dateValue).description
-    window?.title = "Synchronizacja — \(selectedPeriod)"
-    plan = nil
-    engine = nil
-    progress.startAnimation(nil)
-    feedback.textColor = .secondaryLabelColor
-    feedback.stringValue = "Pobieram dane z obu instancji Jiry…"
-    load()
+    refresh()
   }
 
   @objc private func execute() {
@@ -242,12 +259,24 @@ import ThisIsLoggedCore
     alert.addButton(withTitle: "Anuluj")
     guard alert.runModal() == .alertFirstButtonReturn else { return }
 
+    writing = true
+    dayPicker.isEnabled = false
+    refreshButton.isEnabled = false
     executeButton.isEnabled = false
     progress.startAnimation(nil)
     feedback.textColor = .secondaryLabelColor
     feedback.stringValue = "Zapisuję…"
     Task {
+      defer {
+        writing = false
+        dayPicker.isEnabled = true
+        refreshButton.isEnabled = true
+      }
       do {
+        guard !(try SettingsStore().load()).isOnVacation() else {
+          show(error: "Synchronizacja jest wyłączona na czas urlopu.")
+          return
+        }
         let result = try await engine.execute(plan, actions: actions)
         do {
           let refreshedPlan = try await engine.syncPlan(from: plan.from, to: plan.to)
@@ -255,7 +284,7 @@ import ThisIsLoggedCore
         } catch {
           progress.stopAnimation(nil)
           feedback.textColor = .systemOrange
-          feedback.stringValue = "Zapisano \(result.writtenDays) dni, \(hours(result.writtenSeconds)) h, ale nie udało się potwierdzić nowych wartości. Otwórz okno ponownie."
+          feedback.stringValue = "Zapisano \(result.writtenDays) dni, \(hours(result.writtenSeconds)) h, ale nie udało się potwierdzić nowych wartości. Kliknij Odśwież."
           completion()
         }
       } catch {
@@ -289,14 +318,20 @@ import ThisIsLoggedCore
   }
 
   func layoutSelfcheck() {
+    _ = view
     let plan = try! JSONDecoder().decode(SyncPlan.self, from: Data(#"{"from":"2026-09-07","to":"2026-09-07","targetIssue":"AUT-1","items":[{"day":"2026-09-07","sourceSeconds":28800,"targetSeconds":36000,"issueKeys":["RPR-1"],"targetWorklogIDs":["old-1"],"state":"collision"}]}"#.utf8))
     render(plan)
-    window?.contentView?.layoutSubtreeIfNeeded()
+    view.layoutSubtreeIfNeeded()
     rows.layoutSubtreeIfNeeded()
     let renderedViews = rows.arrangedSubviews.flatMap { ($0 as? NSStackView)?.arrangedSubviews ?? [] }
+    let viewport = rows.enclosingScrollView!.contentView
     precondition(
-      window?.minSize.width == 620 && dayPicker.frame.height > 0 && executeButton.frame.height > 0 && rows.frame.width > 0 && rows.frame.height > 30 &&
-        renderedViews.count == 8 && renderedViews.allSatisfy { $0.frame.height > 0 },
+      dayPicker.frame.height > 0 && executeButton.frame.height > 0 && rows.frame.width > 0 && rows.frame.height > 30 &&
+        renderedViews.count == 8 && renderedViews.allSatisfy {
+          let frame = viewport.convert($0.bounds, from: $0)
+          return frame.height > 0 && frame.minX >= 0 && frame.maxX <= viewport.bounds.width
+        } && view.bounds.contains(view.convert(dayPicker.bounds, from: dayPicker)) &&
+        view.bounds.contains(view.convert(executeButton.bounds, from: executeButton)),
       "Okno synchronizacji ma nieprawidłowy układ"
     )
     choices.values.first?.selectItem(at: 1)

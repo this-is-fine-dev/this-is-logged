@@ -15,7 +15,7 @@ if rg -q '\.utilityWindow' "$PROJECT_ROOT/macos"; then
   exit 1
 fi
 
-for window_source in main.swift SyncWindowController.swift; do
+for window_source in main.swift; do
   if ! rg -q 'toolbarStyle = \.unifiedCompact' "$PROJECT_ROOT/macos/$window_source"; then
     echo "$window_source does not use the full-size unified title bar" >&2
     exit 1
@@ -74,8 +74,8 @@ if rg -q 'menu\.autoenablesItems = false' "$PROJECT_ROOT/macos/main.swift"; then
   exit 1
 fi
 
-if ! rg -q 'NSButton\(title: "Synchronizuj…"[^\n]+#selector\(showSynchronization\)' "$PROJECT_ROOT/macos/main.swift"; then
-  echo "enabled Jira synchronization must remain reachable from the settings window" >&2
+if rg -q 'NSWindowController|NSPanel\(' "$PROJECT_ROOT/macos/SyncWindowController.swift"; then
+  echo "synchronization browser must be embedded in the sidebar page" >&2
   exit 1
 fi
 
