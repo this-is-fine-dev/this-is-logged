@@ -20,6 +20,7 @@ Awaria albo wyłączenie synchronizacji nie blokuje odczytu raportów z Jiry gł
 ## Możliwości
 
 - raport dzisiejszy z pełną datą oraz bilans bieżącego miesiąca;
+- miesięczny cel powiększany o zapisane nadgodziny, także pracę w dni wolne;
 - kontrola wczoraj, tygodnia pracy i zakończonych dni miesiąca;
 - wskazanie konkretnych dat i brakujących godzin;
 - odświeżanie co minutę przez `launchd`;

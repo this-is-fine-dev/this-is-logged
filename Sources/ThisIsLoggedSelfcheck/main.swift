@@ -117,6 +117,33 @@ precondition(reports.month.missing == [MissingDay(date: LocalDay("2026-09-01")!,
 precondition(reports.month.differences == [TargetDifference(date: LocalDay("2026-09-01")!, sourceSeconds: 7200, targetSeconds: 3600)])
 precondition(reports.monthCapacity == MonthCapacity(workingDays: 22, daysOff: 8, expectedSeconds: 633_600, reportedSeconds: 36_000))
 
+let septemberEnd = LocalDay("2026-09-30")!
+var overtimeDays = Dictionary(uniqueKeysWithValues:
+  Reporting.workdays(from: LocalDay("2026-09-01")!, through: septemberEnd)
+    .map { ($0, DayTotal(seconds: eightHours)) })
+for date in ["2026-09-03", "2026-09-11", "2026-09-23"] {
+  overtimeDays[LocalDay(date)!] = DayTotal(seconds: 9 * 3600)
+}
+overtimeDays[septemberEnd] = DayTotal(seconds: 2 * 3600)
+overtimeDays[LocalDay("2026-08-31")!] = DayTotal(seconds: 12 * 3600)
+overtimeDays[LocalDay("2026-10-01")!] = DayTotal(seconds: 12 * 3600)
+let overtime = Reporting.analyze(now: septemberEnd, expectedSeconds: eightHours, sourceDays: overtimeDays)
+precondition(overtime.monthCapacity.reportedSeconds == 173 * 3600)
+precondition(overtime.monthCapacity.expectedSeconds == 179 * 3600)
+precondition(overtime.today.missing == [MissingDay(date: septemberEnd, sourceSeconds: 2 * 3600)])
+overtimeDays[septemberEnd] = DayTotal(seconds: eightHours)
+let completedOvertime = Reporting.analyze(now: septemberEnd, expectedSeconds: eightHours, sourceDays: overtimeDays)
+precondition(completedOvertime.monthCapacity.reportedSeconds == 179 * 3600)
+precondition(completedOvertime.monthCapacity.expectedSeconds == 179 * 3600)
+
+let daysOffOvertime = Reporting.analyze(now: LocalDay("2026-12-28")!, expectedSeconds: eightHours, sourceDays: [
+  LocalDay("2026-12-24")!: DayTotal(seconds: 3600),
+  LocalDay("2026-12-27")!: DayTotal(seconds: 2 * 3600),
+  LocalDay("2026-12-29")!: DayTotal(seconds: 12 * 3600),
+])
+precondition(daysOffOvertime.monthCapacity.reportedSeconds == 3 * 3600)
+precondition(daysOffOvertime.monthCapacity.expectedSeconds == daysOffOvertime.monthCapacity.workingDays * eightHours + 3 * 3600)
+
 let monday = Reporting.analyze(now: LocalDay("2026-09-07")!, expectedSeconds: eightHours, sourceDays: [:])
 precondition(monday.week.from.description == "2026-08-31" && monday.week.to.description == "2026-09-06")
 precondition(monday.week.workingDays == 5)

@@ -154,6 +154,11 @@ public enum Reporting {
     let nextMonth = monthFrom.adding(months: 1)
     let monthTo = nextMonth.adding(days: -1)
     let monthWorkdays = workdays(from: monthFrom, through: monthTo)
+    let monthDays = sourceDays.filter { $0.key >= monthFrom && $0.key <= now }
+    // Monthly target includes recorded overtime; incomplete days do not reduce it.
+    let overtimeSeconds = monthDays.reduce(0) { total, entry in
+      total + max(0, entry.value.seconds - (isWorkday(entry.key) ? expectedSeconds : 0))
+    }
 
     return ReportAnalysis(
       today: status(from: now, to: now, expectedSeconds: expectedSeconds, sourceDays: sourceDays, targetDays: targetDays),
@@ -164,8 +169,8 @@ public enum Reporting {
       monthCapacity: MonthCapacity(
         workingDays: monthWorkdays.count,
         daysOff: monthTo.day - monthWorkdays.count,
-        expectedSeconds: monthWorkdays.count * expectedSeconds,
-        reportedSeconds: sourceDays.filter { $0.key >= monthFrom && $0.key <= now }.values.reduce(0) { $0 + $1.seconds }
+        expectedSeconds: monthWorkdays.count * expectedSeconds + overtimeSeconds,
+        reportedSeconds: monthDays.values.reduce(0) { $0 + $1.seconds }
       )
     )
   }

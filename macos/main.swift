@@ -379,6 +379,7 @@ private func period() -> String {
     headerMonthValue.alignment = .right
     headerMonthDetail.font = .systemFont(ofSize: 11)
     headerMonthDetail.textColor = .secondaryLabelColor
+    headerMonthDetail.lineBreakMode = .byTruncatingTail
     headerTodayLabel.font = .systemFont(ofSize: 10, weight: .semibold)
     headerTodayLabel.textColor = .secondaryLabelColor
     headerTodayValue.font = .monospacedDigitSystemFont(ofSize: 20, weight: .semibold)
@@ -398,6 +399,7 @@ private func period() -> String {
       content.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -14),
       content.topAnchor.constraint(equalTo: view.topAnchor, constant: 10),
       monthRow.widthAnchor.constraint(equalTo: content.widthAnchor),
+      headerMonthDetail.widthAnchor.constraint(equalTo: content.widthAnchor),
     ])
     let menuItem = NSMenuItem()
     menuItem.view = view
@@ -924,6 +926,7 @@ private func period() -> String {
     headerMonthLabel.stringValue = "AUTOMATYZACJA"
     headerMonthValue.stringValue = "WSTRZYMANA"
     headerMonthDetail.stringValue = "Do " + endText + " włącznie"
+    headerMonthDetail.toolTip = nil
     reportSummary.title = "Synchronizacja i powiadomienia są wyłączone"
     reportSummary.submenu = NSMenu()
     setDetails(reportSummary, ["Automatyzacja wznowi się po urlopie."])
@@ -942,6 +945,7 @@ private func period() -> String {
     guard let status else {
       headerMonthValue.stringValue = "—"
       headerMonthDetail.stringValue = "Brak danych z Jiry"
+      headerMonthDetail.toolTip = nil
       headerTodayValue.stringValue = "Brak danych"
       return
     }
@@ -951,7 +955,11 @@ private func period() -> String {
     } else {
       headerMonthValue.stringValue = "—"
     }
-    let summary = periodSummary(month)
+    var summary = periodSummary(month)
+    if month != nil, let capacity = status.monthCapacity {
+      let overtime = capacity.expectedSeconds - capacity.workingDays * expected
+      if overtime > 0 { summary += " (w tym \(formatSeconds(overtime)) h nadgodzin)" }
+    }
     if status.error != nil, let checked = isoDate(status.lastSuccessfulAt ?? status.checkedAt) {
       let time = DateFormatter()
       time.dateFormat = "HH:mm"
@@ -959,6 +967,7 @@ private func period() -> String {
     } else {
       headerMonthDetail.stringValue = summary
     }
+    headerMonthDetail.toolTip = headerMonthDetail.stringValue
 
     if let weekendText {
       headerTodayValue.stringValue = missingDays == 0 ? weekendText : "Braki w raportach: \(missingDays)"
@@ -1289,6 +1298,14 @@ private func period() -> String {
     configuredSyncEnabled = syncEnabled
     configuredCalendarEnabled = true
     setupSettingsPanel()
+    let header = makeHeader().view!
+    let overtimeStatus = try! JSONDecoder().decode(ReportStatus.self, from: Data(#"{"checkedAt":"2026-09-30T08:00:00Z","expectedSeconds":28800,"month":{"from":"2026-09-01","to":"2026-09-29","workingDays":21,"sourceSeconds":615600,"missing":[]},"monthCapacity":{"workingDays":22,"daysOff":8,"expectedSeconds":644400,"reportedSeconds":622800}}"#.utf8))
+    renderHeader(overtimeStatus, today: nil, month: overtimeStatus.month, weekendText: nil, missingDays: 0)
+    header.layoutSubtreeIfNeeded()
+    precondition(headerMonthValue.stringValue == "173.00 / 179.00 h")
+    precondition(headerMonthDetail.stringValue == "Zamknięte dni kompletne (w tym 3.00 h nadgodzin)")
+    precondition(headerMonthDetail.intrinsicContentSize.width <= headerMonthDetail.frame.width,
+                 "Opis nadgodzin musi mieścić się pod licznikiem")
     let bounds = panel.contentView!.bounds
     func visible(_ view: NSView, on page: Int) -> Bool {
       activateSettingsPage(page)
