@@ -100,6 +100,7 @@ struct FailingJira: JiraAccess {
 }
 
 let eightHours = 8 * 3600
+try checkActivityLearning()
 let now = LocalDay("2026-09-03")!
 let source = [
   LocalDay("2026-09-01")!: DayTotal(seconds: 2 * 3600),
@@ -430,6 +431,7 @@ let failure = FailureBox()
 Task.detached {
   defer { finished.signal() }
   do {
+    try await checkLearningRefresh(client: client)
     let user = try await client.currentUser()
     precondition(user == JiraUser(id: "u1", displayName: "Fine"))
     let days = try await client.dailyWorklogs(userID: user.id, from: LocalDay("2026-09-01")!, to: LocalDay("2026-09-30")!)

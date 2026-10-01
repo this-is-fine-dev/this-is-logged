@@ -114,13 +114,13 @@ Pozycja w menu tray i akcja z powiadomienia otwierają bezpośrednio ten ekran. 
 treść w formacie `ABC-123` daje automatyczne przypisanie, a kolejne polecenia w tej samej sesji
 dziedziczą ostatnie pewne zadanie. Podział jest zaokrąglany globalnie do 5 minut.
 Podgląd pobiera też worklogi z głównej Jiry: już zapisany czas jest przypięty do właściwych zadań,
-odejmowany od pozostałej części dnia i oznaczony w kolumnie **Podstawa**. Dzięki temu aktywność
+odejmowany od pozostałej części dnia i oznaczony w kolumnie **W Jirze**. Dzięki temu aktywność
 Claude ani spotkania z Kalendarza nie proponują ponownie godzin, które są już zaraportowane.
 Odcinek trwa od wysłania polecenia do następnego polecenia, dzięki czemu obejmuje także czytanie
 odpowiedzi, analizę zmian i pisanie kolejnej wiadomości. Po 30 minutach bez kolejnej aktywności jest
 automatycznie zamykany.
 
-W bieżącym dniu brak do czasu, który upłynął od 08:00, jest proporcjonalnie rozdzielany między
+Bez aktywnego modelu ML w bieżącym dniu brak do czasu, który upłynął od 08:00, jest proporcjonalnie rozdzielany między
 rozpoznane zadania. Dashboard jawnie rozdziela czas wynikający ze zdarzeń od dodanej estymacji.
 Obok klucza zadania asynchronicznie pobiera jego tytuł z Jiry głównej.
 
@@ -130,8 +130,40 @@ Ten moduł działa wyłącznie analitycznie: nie zapisuje worklogów do Jiry.
 Hook tylko zapisuje sygnał w tle: nie dodaje instrukcji do rozmowy, nie uruchamia modelu i nie
 wywołuje MCP przy każdym poleceniu. Agent korzysta z MCP dopiero na jawną prośbę o analizę lub
 przegląd dnia. Aplikacja nie zapisuje odpowiedzi, narzędzi ani surowych payloadów, skraca polecenia
-do 1000 znaków i utrzymuje 31-dniową retencję. Odczyt MCP zwraca najwyżej 50 wpisów i po 500 znaków
-tekstu.
+do 1000 znaków. Starsze niż 31 dni zdarzenia pozostają jako lokalne archiwum w tej samej bazie SQLite
+(widok `activity_archive`); nic nie jest już usuwane ze względu na wiek. Indeks daty ogranicza odczyt
+do wybranego dnia. Archiwum zachowuje przypisania i pozwala ponownie przeliczać historię.
+Odczyt MCP zwraca najwyżej 50 wpisów i po 500 znaków tekstu. Wcześniej usunięte dane nie są odtwarzane.
+
+### Lokalne uczenie czasu
+
+`ActivityStore` przechowuje zdarzenia i przypisania, `ActivityEstimator` oblicza propozycję dnia,
+a `ActivityLearning` zbiera potwierdzone przykłady i dopasowuje małą regresję Ridge w Swifcie.
+Nie wymaga LLM, Pythona, usług chmurowych ani dodatkowych zależności. Tekst poleceń nie jest wejściem
+modelu: cechami są minuty sygnałów (odcinki ograniczone do 30 minut) i liczba poleceń dla zadania.
+
+- Uczenie uruchamia się automatycznie przy włączonej integracji Claude, po udanym odświeżeniu statusu,
+  najwyżej raz na dobę; po błędzie ponowna próba następuje najwcześniej po godzinie. Urlop je wstrzymuje.
+- Odczytuje wyłącznie źródłową Jirę, dla dni sprzed co najmniej dwóch dni. Raporty i cechy muszą
+  pozostać takie same przy dwóch odczytach oddzielonych co najmniej 24 godzinami. To ostrożna heurystyka
+  stabilności, nie dowód, że użytkownik zakończył raportowanie.
+- Brak worklogu dla obserwowanego zadania wyklucza dzień z nauki. Zadanie ogólne i sygnały odrzucone
+  przez użytkownika nie są przykładami. Korekta raportów zastępuje poprzedni przykład i wymaga
+  ponownego potwierdzenia. Poprawki przypisań lokalnych unieważniają model.
+- Dane są oddzielone profilem źródła, danych dostępu, zadania ogólnego, normy dnia i strefy czasowej;
+  identyfikator profilu to hash, bez zapisywania tokenu w tabelach uczenia.
+- Dopasowanie korzysta z ostatnich 90 dni, ale archiwalne zdarzenia oraz zapisane przykłady nie wygasają.
+  Wymaga co najmniej 20 dni i 30 przykładów. Najnowsza ćwiartka dni (minimum 5) służy do walidacji,
+  nigdy do dopasowania ocenianego kandydata. Porównanie z dotychczasowym kalkulatorem odbywa się bez
+  podawania mu odpowiedzi z Jiry, również bez nich wyliczane są cechy modelu.
+- ML jest dopuszczany po zmniejszeniu średniego błędu bezwzględnego o co najmniej 10% i 5 minut
+  na zadanie; dopiero wtedy jest ponownie dopasowywany do całego potwierdzonego zbioru.
+  Wynik syntetycznych testów nie gwarantuje poprawy na danych użytkownika.
+- Model stosuje się tylko do dni późniejszych od jego przykładów i przez najwyżej 14 dni od treningu.
+  Dni ze spotkaniami pozostają przy regułach uwzględniających kalendarz. Zapisane godziny nigdy nie są
+  zmniejszane ani dodawane ponownie. Wynik ML nie jest sztucznie dopełniany do 8 godzin.
+- W nagłówku podziału czasu widać zbieranie danych, aktywny model lub powrót do reguł. Całość pozostaje
+  analizą: uczenie i estymacja nie zapisują worklogów ani nie zmieniają synchronizacji i normy dnia.
 
 O ustawionej godzinie przypomnienia aplikacja dołącza informację o gotowej analizie dnia. Przycisk
 **Otwórz analizę** w powiadomieniu prowadzi bezpośrednio do dziennego podsumowania.

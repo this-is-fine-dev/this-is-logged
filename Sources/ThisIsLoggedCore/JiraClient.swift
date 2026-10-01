@@ -97,6 +97,12 @@ public final class JiraClient: JiraAccess, @unchecked Sendable {
     }
   }
 
+  public func worklogSecondsByDayAndIssue(userID: String, from: LocalDay, to: LocalDay) async throws -> [LocalDay: [String: Int]] {
+    try await userWorklogs(userID: userID, from: from, to: to).reduce(into: [:]) {
+      $0[$1.day, default: [:]][$1.issue, default: 0] += $1.seconds
+    }
+  }
+
   private func userWorklogs(userID: String, from: LocalDay, to: LocalDay) async throws -> [UserWorklog] {
     let jql = "worklogAuthor = currentUser() AND worklogDate >= \"\(from)\" AND worklogDate <= \"\(to)\""
     var issues: [Issue] = []

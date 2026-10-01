@@ -6,8 +6,8 @@
 - **Czas zapisany** — worklog z głównej Jiry; pewna część propozycji dnia przypisana do konkretnego zadania, której nie wolno estymować ponownie.
 - **Szum** — polecenie odrzucone podczas przeglądu jako rozmowa lub aktywność nieprzydatna do analizy pracy; zachowuje wyłącznie timestamp jako granicę czasu.
 
-Rejestr aplikacji jest źródłem prawdy. Asynchroniczny hook zapisuje tylko bieżące polecenie i koniec odpowiedzi, niczego nie dodaje do kontekstu Claude'a i nie uruchamia MCP. Klucz Jiry jest wykrywany lokalnie z brancha lub treści, a kolejne polecenia dziedziczą ostatnie pewne przypisanie w sesji. MCP służy wyłącznie do jawnie wywołanego przeglądu i nie zapisuje worklogów do Jiry.
+- **Archiwum aktywności** — starsze zdarzenia wraz z ich przypisaniami, zachowane do przeglądania i ponownej analizy. Wiek zdarzenia nie oznacza jego odrzucenia.
 
-Czas zadania biegnie od polecenia do następnego polecenia użytkownika, więc obejmuje generowanie odpowiedzi, czytanie, analizę kodu i pisanie kolejnej wiadomości. Pojedynczy odcinek ma limit 30 minut bezczynności. Kalkulator najpierw rezerwuje czas już zapisany w głównej Jirze i spotkania, a tylko pozostałą część dnia rozdziela według aktywności Claude.
+- **Przykład uczenia** — para niezależnych sygnałów aktywności i potwierdzonego raportu źródłowej Jiry dla jednego zadania i zakończonego dnia. Poprawiony raport zastępuje poprzednią odpowiedź, nie tworzy kolejnego przykładu.
 
-W bieżącym dniu roboczym, jeśli istnieje choć jedno rozpoznane zadanie, brak do czasu, który upłynął od 08:00, jest rozdzielany proporcjonalnie między zaobserwowane zadania. Czas zaobserwowany i estymowany pozostają osobno widoczne w interfejsie.
+- **Estymacja lokalna** — propozycja czasu wyuczona z historycznych przykładów i sprawdzona na późniejszych dniach. Nie jest pomiarem rzeczywistej pracy ani poleceniem zapisania worklogu; norma dnia pozostaje odrębnym pojęciem.

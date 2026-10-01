@@ -1477,6 +1477,10 @@ if let notify = arguments.firstIndex(of: "--notify"), arguments.indices.contains
     let state = try await SnapshotStore().refresh(using: .live(settings: settings))
     announceStatusChange()
     print("\(state.checkedAt) miesiąc: \(nativeHours(state.month?.sourceSeconds ?? 0))/\(nativeHours(state.monthCapacity?.expectedSeconds ?? 0))h")
+    if state.error == nil, settings.claudeIntegrationEnabled {
+      do { try await ActivityStore().refreshLearning(settings: settings) }
+      catch { fputs("Uczenie lokalne odłożone: \(error.localizedDescription)\n", stderr) }
+    }
   }
 } else if arguments.contains("--agent-reminder") {
   runAgentMode(failureNotificationKey: "THIS_IS_LOGGED_REMINDER_ERROR") {

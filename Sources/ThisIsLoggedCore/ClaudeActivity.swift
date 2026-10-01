@@ -34,6 +34,7 @@ public struct DailyActivity: Sendable {
   public let observedMinutes: Int
   public let inferredMinutes: Int
   public let loggedMinutes: Int
+  public let usesLearnedEstimate: Bool
 
   public init(
     day: String,
@@ -41,7 +42,8 @@ public struct DailyActivity: Sendable {
     allocations: [ActivityAllocation],
     observedMinutes: Int? = nil,
     inferredMinutes: Int = 0,
-    loggedMinutes: Int = 0
+    loggedMinutes: Int = 0,
+    usesLearnedEstimate: Bool = false
   ) {
     self.day = day
     self.events = events
@@ -49,6 +51,7 @@ public struct DailyActivity: Sendable {
     self.observedMinutes = observedMinutes ?? allocations.reduce(0) { $0 + $1.minutes }
     self.inferredMinutes = inferredMinutes
     self.loggedMinutes = loggedMinutes
+    self.usesLearnedEstimate = usesLearnedEstimate
   }
 }
 
@@ -79,7 +82,7 @@ public enum ClaudeActivityError: LocalizedError {
 public final class ActivityStore: @unchecked Sendable {
   public static let defaultFile = SettingsStore.defaultDirectory.appendingPathComponent("activity.sqlite")
   fileprivate static let capturedEventNames: Set<String> = ["UserPromptSubmit", "Stop"]
-  private static let discardedIssue = "__IGNORED__"
+  static let discardedIssue = "__IGNORED__"
 
   private let file: URL
 
@@ -120,9 +123,7 @@ public final class ActivityStore: @unchecked Sendable {
       bind(issue, to: statement, at: 7)
       bind(text, to: statement, at: 8)
       guard sqlite3_step(statement) == SQLITE_DONE else { throw databaseError(database) }
-      guard sqlite3_exec(database, "DELETE FROM activity_events WHERE occurred_at < strftime('%s','now','-31 days')", nil, nil, nil) == SQLITE_OK else {
-        throw databaseError(database)
-      }
+      // Older events are the local archive. Indexed date reads keep daily analysis bounded.
     }
     return HookCapture(eventID: id, eventName: eventName, issueKey: issue)
   }
@@ -131,10 +132,10 @@ public final class ActivityStore: @unchecked Sendable {
     let sql = """
       SELECT issue_key FROM (
         SELECT e.occurred_at,
-          COALESCE(
+          CASE WHEN e.issue_key = '__IGNORED__' THEN e.issue_key ELSE COALESCE(
             (SELECT a.issue_key FROM activity_attributions a WHERE a.event_id = e.id ORDER BY a.occurred_at DESC LIMIT 1),
             e.issue_key
-          ) AS issue_key
+          ) END AS issue_key
         FROM activity_events e
         WHERE e.session_id = ? AND e.kind = 'UserPromptSubmit'
       )
@@ -152,6 +153,8 @@ public final class ActivityStore: @unchecked Sendable {
   public func discard(eventID: String) throws -> Bool {
     guard UUID(uuidString: eventID) != nil else { throw ClaudeActivityError.invalidHook }
     return try withDatabase { database in
+      guard sqlite3_exec(database, "BEGIN IMMEDIATE", nil, nil, nil) == SQLITE_OK else { throw databaseError(database) }
+      defer { sqlite3_exec(database, "ROLLBACK", nil, nil, nil) }
       var statement: OpaquePointer?
       guard sqlite3_prepare_v2(database, "UPDATE activity_events SET issue_key = ?, text = NULL WHERE id = ? AND kind = 'UserPromptSubmit'", -1, &statement, nil) == SQLITE_OK else {
         throw databaseError(database)
@@ -160,7 +163,12 @@ public final class ActivityStore: @unchecked Sendable {
       bind(Self.discardedIssue, to: statement, at: 1)
       bind(eventID, to: statement, at: 2)
       guard sqlite3_step(statement) == SQLITE_DONE else { throw databaseError(database) }
-      return sqlite3_changes(database) == 1
+      let changed = sqlite3_changes(database) == 1
+      if changed {
+        guard sqlite3_exec(database, "UPDATE activity_learning_state SET model = NULL, completed_at = NULL, attempted_at = 0", nil, nil, nil) == SQLITE_OK else { throw databaseError(database) }
+      }
+      guard sqlite3_exec(database, "COMMIT", nil, nil, nil) == SQLITE_OK else { throw databaseError(database) }
+      return changed
     }
   }
 
@@ -171,6 +179,8 @@ public final class ActivityStore: @unchecked Sendable {
       throw ClaudeActivityError.invalidHook
     }
     try withDatabase { database in
+      guard sqlite3_exec(database, "BEGIN IMMEDIATE", nil, nil, nil) == SQLITE_OK else { throw databaseError(database) }
+      defer { sqlite3_exec(database, "ROLLBACK", nil, nil, nil) }
       let sql = "INSERT INTO activity_attributions (id, event_id, occurred_at, issue_key, summary, confidence) VALUES (?, ?, ?, ?, ?, ?)"
       for eventID in eventIDs {
         var statement: OpaquePointer?
@@ -185,6 +195,8 @@ public final class ActivityStore: @unchecked Sendable {
         sqlite3_finalize(statement)
         guard result == SQLITE_DONE else { throw databaseError(database) }
       }
+      guard sqlite3_exec(database, "UPDATE activity_learning_state SET model = NULL, completed_at = NULL, attempted_at = 0", nil, nil, nil) == SQLITE_OK else { throw databaseError(database) }
+      guard sqlite3_exec(database, "COMMIT", nil, nil, nil) == SQLITE_OK else { throw databaseError(database) }
     }
   }
 
@@ -194,116 +206,31 @@ public final class ActivityStore: @unchecked Sendable {
     targetMinutes: Int? = nil,
     reservedIntervals: [DateInterval] = [],
     loggedSecondsByIssue: [String: Int] = [:],
-    fallbackIssue: String = "Nieprzypisane"
+    fallbackIssue: String = "Nieprzypisane",
+    model: ActivityTimeModel? = nil
   ) throws -> DailyActivity {
     let calendar = Calendar.current
     let start = calendar.startOfDay(for: date)
     let dayEnd = calendar.date(byAdding: .day, value: 1, to: start)!
     let end = min(dayEnd, max(start, now))
     let events = try events(from: start, to: end)
-    let prompts = events.filter { $0.kind == "UserPromptSubmit" }
-    let reserved = Self.merged(reservedIntervals.compactMap { interval in
-      let clippedStart = max(start, interval.start)
-      let clippedEnd = min(end, interval.end)
-      return clippedStart < clippedEnd ? DateInterval(start: clippedStart, end: clippedEnd) : nil
-    })
-    var seconds: [String: Double] = [:]
-
-    for (index, prompt) in prompts.enumerated() {
-      let nextPrompt = prompts.indices.contains(index + 1) ? prompts[index + 1].occurredAt : end
-      let finish = min(nextPrompt, prompt.occurredAt.addingTimeInterval(30 * 60))
-      let promptInterval = DateInterval(start: prompt.occurredAt, end: max(prompt.occurredAt, finish))
-      let occupied = reserved.reduce(0) { total, interval in
-        total + max(0, min(promptInterval.end, interval.end).timeIntervalSince(max(promptInterval.start, interval.start)))
-      }
-      let duration = max(0, promptInterval.duration - occupied)
-      let issue = prompt.issueKey ?? fallbackIssue
-      if issue != Self.discardedIssue { seconds[issue, default: 0] += duration }
-    }
-
-    let loggedUnits = loggedSecondsByIssue.reduce(into: [String: Int]()) { result, item in
-      let value = Int((Double(max(0, item.value)) / 300).rounded())
-      if value > 0 { result[item.key] = value }
-    }
-    let residualSeconds = seconds.reduce(into: [String: Double]()) { result, item in
-      let value = max(0, item.value - Double(loggedUnits[item.key, default: 0] * 300))
-      if value > 0 { result[item.key] = value }
-    }
-    let trackedSeconds = residualSeconds.values.reduce(0, +)
-    let observedTaskUnits = trackedSeconds > 0 ? max(1, Int((trackedSeconds / 300).rounded())) : 0
-    let reservedUnits = Int((reserved.reduce(0) { $0 + $1.duration } / 300).rounded())
-    let uncoveredReservedUnits = max(0, reservedUnits - loggedUnits[fallbackIssue, default: 0])
-    var units = loggedUnits
-    if uncoveredReservedUnits > 0 { units[fallbackIssue, default: 0] += uncoveredReservedUnits }
-    let fixedUnits = units.values.reduce(0, +)
-    let requestedUnits = targetMinutes.map { Int((Double(max(0, $0)) / 5).rounded()) } ?? fixedUnits + observedTaskUnits
-    let canInfer = seconds.keys.contains { $0 != "Nieprzypisane" }
-    let requestedTaskUnits = max(0, requestedUnits - fixedUnits)
-    let trackedTaskUnits = canInfer ? max(observedTaskUnits, requestedTaskUnits) : observedTaskUnits
-    let distributionSeconds = trackedSeconds > 0 ? residualSeconds : seconds
-    let distributionTotal = distributionSeconds.values.reduce(0, +)
-    if trackedTaskUnits > 0, distributionTotal > 0 {
-      let shares = distributionSeconds.map { (key: $0.key, exact: $0.value / distributionTotal * Double(trackedTaskUnits)) }
-      var allocatedTaskUnits = 0
-      for share in shares {
-        let value = Int(floor(share.exact))
-        units[share.key, default: 0] += value
-        allocatedTaskUnits += value
-      }
-      var left = trackedTaskUnits - allocatedTaskUnits
-      for share in shares.sorted(by: { ($0.exact - floor($0.exact)) > ($1.exact - floor($1.exact)) }) where left > 0 {
-        units[share.key, default: 0] += 1
-        left -= 1
-      }
-    }
-    let allocations = units.filter { $0.value > 0 }.map { key, value in
-      let promptEvidence = prompts.filter { ($0.issueKey ?? fallbackIssue) == key }.count
-      return ActivityAllocation(
-        issueKey: key,
-        minutes: value * 5,
-        evidence: promptEvidence + (key == fallbackIssue ? reservedIntervals.count : 0),
-        loggedMinutes: loggedUnits[key, default: 0] * 5
-      )
-    }.sorted { left, right in
-      if left.issueKey == "Nieprzypisane" { return false }
-      if right.issueKey == "Nieprzypisane" { return true }
-      return left.minutes == right.minutes ? left.issueKey < right.issueKey : left.minutes > right.minutes
-    }
-    return DailyActivity(
-      day: Self.dayFormatter.string(from: start),
-      events: events.filter { $0.issueKey != Self.discardedIssue },
-      allocations: allocations,
-      observedMinutes: (observedTaskUnits + uncoveredReservedUnits) * 5,
-      inferredMinutes: max(0, trackedTaskUnits - observedTaskUnits) * 5,
-      loggedMinutes: loggedUnits.values.reduce(0, +) * 5
+    return ActivityEstimator.analyze(
+      events: events, start: start, end: end, targetMinutes: targetMinutes,
+      reservedIntervals: reservedIntervals, loggedSecondsByIssue: loggedSecondsByIssue,
+      fallbackIssue: fallbackIssue, model: model?.isUsable(on: LocalDay(date), now: now) == true ? model : nil
     )
   }
 
-  private static func merged(_ intervals: [DateInterval]) -> [DateInterval] {
-    let sorted = intervals.sorted { $0.start < $1.start }
-    guard var current = sorted.first else { return [] }
-    var result: [DateInterval] = []
-    for interval in sorted.dropFirst() {
-      if interval.start <= current.end {
-        current = DateInterval(start: current.start, end: max(current.end, interval.end))
-      } else {
-        result.append(current)
-        current = interval
-      }
-    }
-    result.append(current)
-    return result
-  }
-
-  private func events(from start: Date, to end: Date) throws -> [ActivityEvent] {
+  func events(from start: Date, to end: Date) throws -> [ActivityEvent] {
     try withDatabase { database in
       let sql = """
         SELECT e.id, e.occurred_at, e.session_id, e.kind, e.cwd, e.branch,
-          COALESCE((SELECT a.issue_key FROM activity_attributions a WHERE a.event_id = e.id ORDER BY a.occurred_at DESC LIMIT 1), e.issue_key),
+          CASE WHEN e.issue_key = '__IGNORED__' THEN e.issue_key ELSE
+            COALESCE((SELECT a.issue_key FROM activity_attributions a WHERE a.event_id = e.id ORDER BY a.occurred_at DESC LIMIT 1), e.issue_key) END,
           e.text, e.tool_name
         FROM activity_events e
         WHERE e.occurred_at >= ? AND e.occurred_at < ? AND e.kind IN ('UserPromptSubmit', 'Stop')
-        ORDER BY e.occurred_at
+        ORDER BY e.occurred_at, e.id
         """
       var statement: OpaquePointer?
       guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else { throw databaseError(database) }
@@ -311,7 +238,8 @@ public final class ActivityStore: @unchecked Sendable {
       sqlite3_bind_double(statement, 1, start.timeIntervalSince1970)
       sqlite3_bind_double(statement, 2, end.timeIntervalSince1970)
       var result: [ActivityEvent] = []
-      while sqlite3_step(statement) == SQLITE_ROW {
+      var step = sqlite3_step(statement)
+      while step == SQLITE_ROW {
         result.append(ActivityEvent(
           id: string(statement, 0) ?? "",
           occurredAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 1)),
@@ -323,12 +251,14 @@ public final class ActivityStore: @unchecked Sendable {
           text: string(statement, 7),
           toolName: string(statement, 8)
         ))
+        step = sqlite3_step(statement)
       }
+      guard step == SQLITE_DONE else { throw databaseError(database) }
       return result
     }
   }
 
-  private func withDatabase<T>(_ body: (OpaquePointer) throws -> T) throws -> T {
+  func withDatabase<T>(_ body: (OpaquePointer) throws -> T) throws -> T {
     try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
     var database: OpaquePointer?
     guard sqlite3_open_v2(file.path, &database, SQLITE_OPEN_CREATE | SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX, nil) == SQLITE_OK,
@@ -378,14 +308,16 @@ public final class ActivityStore: @unchecked Sendable {
       occurred_at REAL NOT NULL, issue_key TEXT NOT NULL, summary TEXT NOT NULL, confidence REAL NOT NULL
     );
     CREATE INDEX IF NOT EXISTS activity_attributions_event ON activity_attributions(event_id, occurred_at);
+    CREATE VIEW IF NOT EXISTS activity_archive AS
+      SELECT * FROM activity_events WHERE occurred_at < strftime('%s','now','-31 days');
+    CREATE TABLE IF NOT EXISTS activity_learning_days (
+      profile TEXT NOT NULL, day TEXT NOT NULL, features TEXT NOT NULL, reports TEXT NOT NULL,
+      baselines TEXT NOT NULL, stable_since REAL NOT NULL, confirmed_at REAL NOT NULL, PRIMARY KEY(profile, day)
+    );
+    CREATE TABLE IF NOT EXISTS activity_learning_state (
+      profile TEXT PRIMARY KEY, attempted_at REAL NOT NULL, completed_at REAL, model TEXT
+    );
     """
-
-  private static let dayFormatter: DateFormatter = {
-    let formatter = DateFormatter()
-    formatter.locale = Locale(identifier: "en_US_POSIX")
-    formatter.dateFormat = "yyyy-MM-dd"
-    return formatter
-  }()
 
   public static func issueKey(in value: String?) -> String? {
     guard let value,
@@ -409,16 +341,16 @@ public final class ActivityStore: @unchecked Sendable {
     return branch?.isEmpty == false ? branch : nil
   }
 
-  private func databaseError(_ database: OpaquePointer) -> ClaudeActivityError {
+  func databaseError(_ database: OpaquePointer) -> ClaudeActivityError {
     .database(String(cString: sqlite3_errmsg(database)))
   }
 
-  private func bind(_ value: String?, to statement: OpaquePointer?, at index: Int32) {
+  func bind(_ value: String?, to statement: OpaquePointer?, at index: Int32) {
     guard let value else { sqlite3_bind_null(statement, index); return }
     sqlite3_bind_text(statement, index, value, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
   }
 
-  private func string(_ statement: OpaquePointer?, _ index: Int32) -> String? {
+  func string(_ statement: OpaquePointer?, _ index: Int32) -> String? {
     guard let value = sqlite3_column_text(statement, index) else { return nil }
     return String(cString: value)
   }
@@ -516,12 +448,16 @@ public struct ClaudeMCPServer: Sendable {
           calendarError = error.localizedDescription
         }
       }
+      let model = settings.flatMap { settings in
+        settings.claudeIntegrationEnabled ? try? store.learningModel(profile: ActivityStore.learningProfile(settings)) : nil
+      }
       let activity = try store.activity(
         on: day,
         now: now,
         targetMinutes: arguments["target_minutes"] as? Int,
         reservedIntervals: meetings.map(\.interval),
-        fallbackIssue: settings?.catchAllIssue ?? "Nieprzypisane"
+        fallbackIssue: settings?.catchAllIssue ?? "Nieprzypisane",
+        model: calendarError == nil ? model : nil
       )
       let allocations = activity.allocations.map {
         ["issue_key": $0.issueKey, "minutes": $0.minutes, "evidence": $0.evidence]
@@ -538,6 +474,7 @@ public struct ClaudeMCPServer: Sendable {
         "date": activity.day, "allocations": allocations,
         "meetings": calendarEntries, "calendar_error": calendarError.map { $0 as Any } ?? NSNull(),
         "observed_minutes": activity.observedMinutes, "inferred_minutes": activity.inferredMinutes,
+        "uses_learned_estimate": activity.usesLearnedEstimate,
         "total_minutes": activity.allocations.reduce(0) { $0 + $1.minutes },
       ])
     default:

@@ -16,6 +16,7 @@ import ThisIsLoggedCore
   private var issueTitles: [String: String] = [:]
   private var loadingTitles: Set<String> = []
   private let columnWidths: [CGFloat] = [190, 50, 55, 65, 118]
+  private var reloadID = UUID()
 
   init(settings: AppSettings?) {
     self.settings = settings
@@ -96,6 +97,8 @@ import ThisIsLoggedCore
   }
 
   @objc private func reload() {
+    let requestID = UUID()
+    reloadID = requestID
     guard let settings else {
       renderUnavailable()
       return
@@ -129,20 +132,35 @@ import ThisIsLoggedCore
         jiraWarning = error.localizedDescription
       }
       do {
+        var model: ActivityTimeModel?
+        var learningSummary: String?
+        if settings.claudeIntegrationEnabled {
+          do {
+            model = try store.learningModel(profile: ActivityStore.learningProfile(settings))
+            learningSummary = model?.summary(on: LocalDay(date), now: now) ?? "ML · nauka: 0/20 dni, 0/30 próbek"
+          } catch {
+            learningSummary = "ML niedostępny · używam reguł"
+          }
+        }
         let activity = try store.activity(
           on: date,
           now: now,
           targetMinutes: target,
           reservedIntervals: meetings.map(\.interval),
           loggedSecondsByIssue: loggedSecondsByIssue,
-          fallbackIssue: settings.catchAllIssue
+          fallbackIssue: settings.catchAllIssue,
+          model: jiraWarning == nil && calendarWarning == nil ? model : nil
         )
+        if model?.isUsable(on: LocalDay(date), now: now) == true, !activity.usesLearnedEstimate {
+          learningSummary = "ML · reguły dla tego dnia"
+        }
         await MainActor.run {
-          guard Calendar.current.isDate(self.datePicker.dateValue, inSameDayAs: date) else { return }
-          self.render(activity, loggedSecondsByIssue: loggedSecondsByIssue, meetings: meetings, calendarWarning: calendarWarning, jiraWarning: jiraWarning)
+          guard self.reloadID == requestID, self.settings == settings else { return }
+          self.render(activity, loggedSecondsByIssue: loggedSecondsByIssue, meetings: meetings, calendarWarning: calendarWarning, jiraWarning: jiraWarning, learningSummary: learningSummary)
         }
       } catch {
         await MainActor.run {
+          guard self.reloadID == requestID, self.settings == settings else { return }
           self.render(DailyActivity(day: "", events: [], allocations: []), loggedSecondsByIssue: [:], meetings: meetings)
           self.dayStatus.textColor = .systemRed
           self.dayStatus.stringValue = "Nie udało się odczytać aktywności: \(error.localizedDescription)"
@@ -157,6 +175,7 @@ import ThisIsLoggedCore
     meetings: [CalendarMeeting] = [],
     calendarWarning: String? = nil,
     jiraWarning: String? = nil,
+    learningSummary: String? = nil,
     fetchTitles: Bool = true
   ) {
     guard let settings else { return }
@@ -164,7 +183,9 @@ import ThisIsLoggedCore
     allocationRows.removeAll()
     issueFields.removeAll()
 
-    rows.addArrangedSubview(section("SZACOWANY PODZIAŁ CZASU"))
+    let heading = section(learningSummary.map { "PODZIAŁ CZASU · \($0)" } ?? "SZACOWANY PODZIAŁ CZASU")
+    heading.widthAnchor.constraint(equalToConstant: 526).isActive = true
+    rows.addArrangedSubview(heading)
     rows.addArrangedSubview(row([
       label("Zadanie", header: true), label("Czas", header: true),
       label("W Jirze", header: true),
@@ -206,7 +227,8 @@ import ThisIsLoggedCore
     dayTotal.stringValue = "\(Self.duration(total)) / \(Self.duration(target)) h"
     dayTotal.textColor = total == target || target == 0 ? .labelColor : .systemOrange
     dayStatus.textColor = calendarWarning == nil && jiraWarning == nil ? .secondaryLabelColor : .systemOrange
-    let estimate = activity.observedMinutes > 0 ? "\(Self.duration(activity.observedMinutes)) z aktywności" : nil
+    let estimate = activity.observedMinutes > 0
+      ? "\(Self.duration(activity.observedMinutes)) \(activity.usesLearnedEstimate ? "szacowane przez ML" : "z aktywności")" : nil
     let logged = activity.loggedMinutes > 0 ? "\(Self.duration(activity.loggedMinutes)) już w Jirze" : nil
     let meetingSummary = meetings.isEmpty ? nil : "\(meetings.count) spotk."
     let warnings = [calendarWarning.map { "Kalendarz: \($0)" }, jiraWarning.map { "Jira: \($0)" }]
@@ -347,7 +369,8 @@ import ThisIsLoggedCore
       ActivityAllocation(issueKey: "ABC-3", minutes: 15, evidence: 3),
       ActivityAllocation(issueKey: "ABC-4", minutes: 15, evidence: 0, loggedMinutes: 15),
     ])
-    render(activity, loggedSecondsByIssue: ["ABC-1": 1800, "ABC-2": 420, "ABC-4": 900], fetchTitles: false)
+    render(activity, loggedSecondsByIssue: ["ABC-1": 1800, "ABC-2": 420, "ABC-4": 900],
+      learningSummary: "ML · nauka: 12/20 dni, 24/30 próbek", fetchTitles: false)
     view.layoutSubtreeIfNeeded()
     resizeDocument()
     let frames = allocationRows.map { $0.convert($0.bounds, to: rows) }.sorted { $0.minY < $1.minY }
@@ -357,6 +380,7 @@ import ThisIsLoggedCore
     let cells = allocationRows.map { ($0 as! NSStackView).arrangedSubviews.compactMap { $0 as? NSTextField } }
     let headers = (rows.arrangedSubviews[1] as! NSStackView).arrangedSubviews.compactMap { ($0 as? NSTextField)?.stringValue }
     precondition(headers == ["Zadanie", "Czas", "W Jirze", "Podstawa", "Zakres sygnałów"])
+    precondition((rows.arrangedSubviews[0] as! NSTextField).stringValue.contains("ML · nauka"))
     precondition(cells.allSatisfy { $0.count == 5 })
     precondition(cells.map { $0[2].stringValue } == ["0:30", "0:07", "0:00", "0:15"])
     precondition(cells[0][1].stringValue == "2:30" && cells[0][3].stringValue == "3 wsk.")
