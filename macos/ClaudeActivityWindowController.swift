@@ -15,6 +15,7 @@ import ThisIsLoggedCore
   private var issueFields: [String: NSTextField] = [:]
   private var issueTitles: [String: String] = [:]
   private var loadingTitles: Set<String> = []
+  private let columnWidths: [CGFloat] = [190, 50, 55, 65, 118]
 
   init(settings: AppSettings?) {
     self.settings = settings
@@ -138,11 +139,11 @@ import ThisIsLoggedCore
         )
         await MainActor.run {
           guard Calendar.current.isDate(self.datePicker.dateValue, inSameDayAs: date) else { return }
-          self.render(activity, meetings: meetings, calendarWarning: calendarWarning, jiraWarning: jiraWarning)
+          self.render(activity, loggedSecondsByIssue: loggedSecondsByIssue, meetings: meetings, calendarWarning: calendarWarning, jiraWarning: jiraWarning)
         }
       } catch {
         await MainActor.run {
-          self.render(DailyActivity(day: "", events: [], allocations: []), meetings: meetings)
+          self.render(DailyActivity(day: "", events: [], allocations: []), loggedSecondsByIssue: [:], meetings: meetings)
           self.dayStatus.textColor = .systemRed
           self.dayStatus.stringValue = "Nie udało się odczytać aktywności: \(error.localizedDescription)"
         }
@@ -152,6 +153,7 @@ import ThisIsLoggedCore
 
   private func render(
     _ activity: DailyActivity,
+    loggedSecondsByIssue: [String: Int],
     meetings: [CalendarMeeting] = [],
     calendarWarning: String? = nil,
     jiraWarning: String? = nil,
@@ -165,24 +167,27 @@ import ThisIsLoggedCore
     rows.addArrangedSubview(section("SZACOWANY PODZIAŁ CZASU"))
     rows.addArrangedSubview(row([
       label("Zadanie", header: true), label("Czas", header: true),
+      label("W Jirze", header: true),
       label("Podstawa", header: true), label("Zakres sygnałów", header: true),
-    ], widths: [230, 55, 90, 115]))
+    ], widths: columnWidths))
     for allocation in activity.allocations {
       let meetingCount = allocation.issueKey == settings.catchAllIssue ? meetings.count : 0
       let promptCount = max(0, allocation.evidence - meetingCount)
       let evidence = [
-        allocation.loggedMinutes > 0 ? "\(Self.duration(allocation.loggedMinutes)) Jira" : nil,
         meetingCount > 0 ? "\(meetingCount) spotk." : nil,
         promptCount > 0 ? "\(promptCount) wsk." : nil,
       ].compactMap { $0 }.joined(separator: " · ")
       let task = wrappingLabel(Self.taskLabel(allocation.issueKey, title: issueTitles[allocation.issueKey]))
       task.toolTip = task.stringValue
       issueFields[allocation.issueKey] = task
+      let logged = label(jiraWarning == nil ? Self.duration(loggedSecondsByIssue[allocation.issueKey, default: 0] / 60) : "—")
+      logged.toolTip = jiraWarning.map { "Nie udało się odczytać czasu z Jiry: \($0)" }
+        ?? "Twój czas zapisany w Jirze głównej dla tego zadania w wybranym dniu (godziny:minuty)."
       let item = row([
         task, label(Self.duration(allocation.minutes)),
-        label(evidence.isEmpty ? "bez wskazań" : evidence),
+        logged, label(evidence.isEmpty ? "—" : evidence),
         label(signalRange(for: allocation.issueKey, events: activity.events, meetings: meetings)),
-      ], widths: [230, 55, 90, 115], alignment: .top)
+      ], widths: columnWidths, alignment: .top)
       allocationRows.append(item)
       rows.addArrangedSubview(item)
     }
@@ -292,6 +297,7 @@ import ThisIsLoggedCore
     let field = NSTextField(labelWithString: value)
     field.font = header ? .systemFont(ofSize: 11, weight: .semibold) : .systemFont(ofSize: 13)
     field.lineBreakMode = .byTruncatingTail
+    field.toolTip = value
     return field
   }
 
@@ -335,24 +341,35 @@ import ThisIsLoggedCore
   func layoutSelfcheck() {
     view.layoutSubtreeIfNeeded()
     issueTitles["ABC-1"] = "ABC-1 — Bardzo długi tytuł zadania, który ma być widoczny w całości i zawinąć się na kolejny wiersz"
-    render(DailyActivity(day: "2026-09-07", events: [], allocations: [
-      ActivityAllocation(issueKey: "ABC-1", minutes: 15, evidence: 3),
+    let activity = DailyActivity(day: "2026-09-07", events: [], allocations: [
+      ActivityAllocation(issueKey: "ABC-1", minutes: 150, evidence: 3, loggedMinutes: 30),
       ActivityAllocation(issueKey: "ABC-2", minutes: 15, evidence: 3),
       ActivityAllocation(issueKey: "ABC-3", minutes: 15, evidence: 3),
-      ActivityAllocation(issueKey: "ABC-4", minutes: 15, evidence: 3),
-    ]), fetchTitles: false)
+      ActivityAllocation(issueKey: "ABC-4", minutes: 15, evidence: 0, loggedMinutes: 15),
+    ])
+    render(activity, loggedSecondsByIssue: ["ABC-1": 1800, "ABC-2": 420, "ABC-4": 900], fetchTitles: false)
     view.layoutSubtreeIfNeeded()
     resizeDocument()
     let frames = allocationRows.map { $0.convert($0.bounds, to: rows) }.sorted { $0.minY < $1.minY }
     let separated = frames.allSatisfy { $0.width >= 520 && $0.height >= 15 } &&
       zip(frames, frames.dropFirst()).allSatisfy { $0.maxY <= $1.minY }
     let task = issueFields["ABC-1"]
+    let cells = allocationRows.map { ($0 as! NSStackView).arrangedSubviews.compactMap { $0 as? NSTextField } }
+    let headers = (rows.arrangedSubviews[1] as! NSStackView).arrangedSubviews.compactMap { ($0 as? NSTextField)?.stringValue }
+    precondition(headers == ["Zadanie", "Czas", "W Jirze", "Podstawa", "Zakres sygnałów"])
+    precondition(cells.allSatisfy { $0.count == 5 })
+    precondition(cells.map { $0[2].stringValue } == ["0:30", "0:07", "0:00", "0:15"])
+    precondition(cells[0][1].stringValue == "2:30" && cells[0][3].stringValue == "3 wsk.")
     precondition(
       rows.isFlipped && rows.frame.width >= 526 && rows.frame.height > 100 && safety.frame.height > 0 && separated &&
         task?.maximumNumberOfLines == 0 && task?.lineBreakMode == .byWordWrapping && (task?.frame.height ?? 0) > 20 &&
         Self.taskLabel("ABC-1", title: "ABC-1 — Napraw formularz") == "ABC-1 · Napraw formularz",
       "Okno aktywności ma nieprawidłowy układ"
     )
+    render(activity, loggedSecondsByIssue: [:], jiraWarning: "Offline", fetchTitles: false)
+    precondition(allocationRows.allSatisfy {
+      (($0 as! NSStackView).arrangedSubviews[2] as! NSTextField).stringValue == "—"
+    }, "Brak połączenia z Jirą nie może udawać zerowego czasu")
     print("ok")
   }
 }
