@@ -284,6 +284,31 @@ precondition(loggedOtherTask.allocations.reduce(0) { $0 + $1.minutes } == 80)
 precondition(loggedOtherTask.allocations.contains {
   $0.issueKey == "RPR-18" && $0.minutes == 15 && $0.loggedMinutes == 15
 })
+let reportedThroughOne = try activityStore.activity(
+  on: activityDay,
+  now: activityCalendar.date(bySettingHour: 12, minute: 43, second: 0, of: activityDay)!,
+  targetMinutes: 283,
+  loggedSecondsByIssue: ["RPR-18": 300 * 60]
+)
+precondition(reportedThroughOne.allocations.reduce(0) { $0 + $1.minutes } == 300,
+  "At 12:43, five reported hours must not acquire additional activity time")
+precondition(reportedThroughOne.observedMinutes == 0 && reportedThroughOne.inferredMinutes == 0)
+for targetMinutes: Int? in [nil, 283, 480] {
+  for reportedMinutes in [0, 240, 300] {
+    let capped = try activityStore.activity(
+      on: activityDay,
+      now: activityCalendar.date(bySettingHour: 12, minute: 43, second: 0, of: activityDay)!,
+      targetMinutes: targetMinutes,
+      reservedIntervals: [DateInterval(start: activityDay, duration: 3600)],
+      loggedSecondsByIssue: ["RPR-18": reportedMinutes * 60],
+      fallbackIssue: "MEET-1"
+    )
+    let total = capped.allocations.reduce(0) { $0 + $1.minutes }
+    precondition(total <= max(280, reportedMinutes), "Suggestions must fit elapsed time, including meetings")
+    precondition(total == capped.loggedMinutes + capped.observedMinutes + capped.inferredMinutes)
+    precondition(capped.loggedMinutes == reportedMinutes)
+  }
+}
 
 let burstStore = ActivityStore(file: activityDirectory.appendingPathComponent("burst.sqlite"))
 for index in 0..<6 {

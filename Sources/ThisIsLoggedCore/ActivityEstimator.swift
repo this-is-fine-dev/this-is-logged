@@ -32,7 +32,7 @@ enum ActivityEstimator {
   static func analyze(
     events: [ActivityEvent], start: Date, end: Date, targetMinutes: Int?,
     reservedIntervals: [DateInterval], loggedSecondsByIssue: [String: Int],
-    fallbackIssue: String, model: ActivityTimeModel?
+    fallbackIssue: String, model: ActivityTimeModel?, maximumMinutes: Int? = nil
   ) -> DailyActivity {
     let prompts = events.filter { $0.kind == "UserPromptSubmit" }
     let reserved = merged(reservedIntervals.compactMap { interval in
@@ -71,13 +71,17 @@ enum ActivityEstimator {
     let trackedSeconds = residualSeconds.values.reduce(0, +)
     let observedTaskUnits = trackedSeconds > 0 ? max(1, Int((trackedSeconds / 300).rounded())) : 0
     let reservedUnits = Int((reserved.reduce(0) { $0 + $1.duration } / 300).rounded())
-    let uncoveredReservedUnits = max(0, reservedUnits - loggedUnits[fallbackIssue, default: 0])
+    let budgetUnits = [targetMinutes, maximumMinutes].compactMap { $0 }.min().map { max(0, $0) / 5 }
+    let loggedTotal = loggedUnits.values.reduce(0, +)
+    let uncoveredReservedUnits = min(max(0, reservedUnits - loggedUnits[fallbackIssue, default: 0]),
+      budgetUnits.map { max(0, $0 - loggedTotal) } ?? Int.max)
     var units = loggedUnits
     if uncoveredReservedUnits > 0 { units[fallbackIssue, default: 0] += uncoveredReservedUnits }
     let fixedUnits = units.values.reduce(0, +)
-    let requestedUnits = targetMinutes.map { Int((Double(max(0, $0)) / 5).rounded()) } ?? fixedUnits + observedTaskUnits
+    let requestedUnits = targetMinutes.map { max(0, $0) / 5 } ?? fixedUnits + observedTaskUnits
     let canInfer = !learned && seconds.keys.contains { $0 != "Nieprzypisane" }
-    let trackedTaskUnits = canInfer ? max(observedTaskUnits, max(0, requestedUnits - fixedUnits)) : observedTaskUnits
+    let proposedTaskUnits = canInfer ? max(observedTaskUnits, max(0, requestedUnits - fixedUnits)) : observedTaskUnits
+    let trackedTaskUnits = min(proposedTaskUnits, budgetUnits.map { max(0, $0 - fixedUnits) } ?? Int.max)
     let distributionSeconds = trackedSeconds > 0 ? residualSeconds : seconds
     let distributionTotal = distributionSeconds.values.reduce(0, +)
     if trackedTaskUnits > 0, distributionTotal > 0 {
@@ -108,7 +112,7 @@ enum ActivityEstimator {
     }
     return DailyActivity(day: LocalDay(start).description,
       events: events.filter { $0.issueKey != ActivityStore.discardedIssue }, allocations: allocations,
-      observedMinutes: (observedTaskUnits + uncoveredReservedUnits) * 5,
+      observedMinutes: (min(observedTaskUnits, trackedTaskUnits) + uncoveredReservedUnits) * 5,
       inferredMinutes: max(0, trackedTaskUnits - observedTaskUnits) * 5,
       loggedMinutes: loggedUnits.values.reduce(0, +) * 5, usesLearnedEstimate: learned)
   }

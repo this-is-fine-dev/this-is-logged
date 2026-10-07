@@ -214,10 +214,14 @@ public final class ActivityStore: @unchecked Sendable {
     let dayEnd = calendar.date(byAdding: .day, value: 1, to: start)!
     let end = min(dayEnd, max(start, now))
     let events = try events(from: start, to: end)
+    let workStart = calendar.date(bySettingHour: 8, minute: 0, second: 0, of: start)!
+    let earliestPrompt = events.first { $0.kind == "UserPromptSubmit" }?.occurredAt ?? workStart
+    let maximumMinutes = now < dayEnd ? max(0, Int(end.timeIntervalSince(min(workStart, earliestPrompt)) / 60)) : nil
     return ActivityEstimator.analyze(
       events: events, start: start, end: end, targetMinutes: targetMinutes,
       reservedIntervals: reservedIntervals, loggedSecondsByIssue: loggedSecondsByIssue,
-      fallbackIssue: fallbackIssue, model: model?.isUsable(on: LocalDay(date), now: now) == true ? model : nil
+      fallbackIssue: fallbackIssue, model: model?.isUsable(on: LocalDay(date), now: now) == true ? model : nil,
+      maximumMinutes: maximumMinutes
     )
   }
 

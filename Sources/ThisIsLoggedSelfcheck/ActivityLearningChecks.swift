@@ -88,17 +88,21 @@ func checkActivityLearning() throws {
   precondition(retry)
 
   let todayStore = ActivityStore(file: directory.appendingPathComponent("today.sqlite"))
-  _ = try todayStore.recordClaudeHook(hook("ABC-1"), now: now)
-  _ = try todayStore.recordClaudeHook(hook("ABC-2"), now: now.addingTimeInterval(1800))
-  let end = now.addingTimeInterval(3600)
-  let estimate = try todayStore.activity(on: now, now: end, targetMinutes: 480, fallbackIssue: "GENERAL-1", model: model)
+  let workStart = Calendar.current.date(bySettingHour: 8, minute: 0, second: 0, of: now.addingTimeInterval(86400))!
+  _ = try todayStore.recordClaudeHook(hook("ABC-1"), now: workStart)
+  _ = try todayStore.recordClaudeHook(hook("ABC-2"), now: workStart.addingTimeInterval(1800))
+  let end = workStart.addingTimeInterval(3600)
+  let estimate = try todayStore.activity(on: workStart, now: end, targetMinutes: 480, fallbackIssue: "GENERAL-1", model: model)
   precondition(estimate.usesLearnedEstimate && estimate.allocations.count == 2)
   precondition(estimate.allocations.reduce(0) { $0 + $1.minutes } < 480, "Learned estimates must not be inflated back to the daily target")
-  let logged = try todayStore.activity(on: now, now: end, targetMinutes: 480,
+  precondition(estimate.allocations.reduce(0) { $0 + $1.minutes } == 60, "ML must fit the elapsed hour even with an eight-hour target")
+  let logged = try todayStore.activity(on: workStart, now: end, targetMinutes: 480,
     loggedSecondsByIssue: ["ABC-1": 300 * 60], fallbackIssue: "GENERAL-1", model: model)
   precondition(logged.allocations.first { $0.issueKey == "ABC-1" }?.minutes == 300, "Logged time is neither reduced nor counted twice")
-  let withMeetings = try todayStore.activity(on: now, now: end, targetMinutes: 480,
-    reservedIntervals: [DateInterval(start: now, duration: 600)], fallbackIssue: "GENERAL-1", model: model)
+  precondition(logged.allocations.reduce(0) { $0 + $1.minutes } == 300 && logged.observedMinutes == 0,
+    "ML must not add another task when reported time already covers the elapsed day")
+  let withMeetings = try todayStore.activity(on: workStart, now: end, targetMinutes: 480,
+    reservedIntervals: [DateInterval(start: workStart, duration: 600)], fallbackIssue: "GENERAL-1", model: model)
   precondition(!withMeetings.usesLearnedEstimate, "Calendar-backed days retain the calendar-aware baseline")
   let permission = try FileManager.default.attributesOfItem(atPath: directory.appendingPathComponent("learning.sqlite").path)[.posixPermissions] as? NSNumber
   precondition(permission?.intValue == 0o600)

@@ -122,6 +122,10 @@ automatycznie zamykany.
 
 Bez aktywnego modelu ML w bieżącym dniu brak do czasu, który upłynął od 08:00, jest proporcjonalnie rozdzielany między
 rozpoznane zadania. Dashboard jawnie rozdziela czas wynikający ze zdarzeń od dodanej estymacji.
+Reguły i ML ograniczają dodatkowe sugestie do pozostałego limitu dnia i czasu, który już upłynął
+(od 08:00 lub wcześniejszego pierwszego polecenia). Czas zapisany w Jirze ma pierwszeństwo:
+jeśli o 12:43 zaraportowano już 5 godzin, analiza nie dodaje kolejnych godzin z aktywności ani spotkań.
+Limit sugestii zaokrąglany jest w dół do 5 minut; zapisane worklogi nie są zmniejszane.
 Obok klucza zadania asynchronicznie pobiera jego tytuł z Jiry głównej.
 
 Pełna lista zdarzeń nadal bierze udział w obliczeniu czasu, ale nie jest pokazywana w interfejsie.
