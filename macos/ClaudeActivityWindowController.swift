@@ -115,6 +115,7 @@ import ThisIsLoggedCore
       var jiraWarning: String?
       if settings.calendarIntegrationEnabled, let range {
         do {
+          guard try await CalendarIntegration.requestAccess() else { throw CalendarIntegrationError.accessDenied }
           meetings = try CalendarIntegration.meetings(
             calendarIdentifier: settings.calendarIdentifier,
             from: range.start,

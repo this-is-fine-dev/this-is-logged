@@ -36,7 +36,13 @@ cp "$PROJECT_ROOT/macos/AppIcon.icns" "$PROJECT_ROOT/macos/AppIcon.png" "$CONTEN
 /usr/bin/ditto "$SPARKLE_FRAMEWORK" "$CONTENTS/Frameworks/Sparkle.framework"
 
 SIGN_IDENTITY=${MACOS_SIGN_IDENTITY:--}
-codesign --force --deep --sign "$SIGN_IDENTITY" "$APP"
+signing_options=()
+if [[ -n "${MACOS_SIGN_KEYCHAIN:-}" ]]; then signing_options+=(--keychain "$MACOS_SIGN_KEYCHAIN"); fi
+if [[ "${CI:-}" == "true" ]]; then
+  test "$SIGN_IDENTITY" != '-'
+  zsh "$PROJECT_ROOT/scripts/check-signing.sh"
+fi
+codesign --force --deep --sign "$SIGN_IDENTITY" "${signing_options[@]}" "$APP"
 codesign --verify --deep --strict "$APP"
 "$CONTENTS/MacOS/ThisIsLogged" --selfcheck
 "$CONTENTS/MacOS/ThisIsLogged" --menu-selfcheck | grep -x 'ok'

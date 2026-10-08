@@ -28,6 +28,8 @@ public enum CalendarIntegrationError: LocalizedError {
 
 public enum CalendarIntegration {
   @MainActor public static func requestAccess() async throws -> Bool {
+    if hasAccess { return true }
+    guard EKEventStore.authorizationStatus(for: .event) == .notDetermined else { return false }
     let store = EKEventStore()
     if #available(macOS 14, *) { return try await store.requestFullAccessToEvents() }
     return try await store.requestAccess(to: .event)

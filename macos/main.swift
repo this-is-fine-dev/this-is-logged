@@ -826,6 +826,11 @@ private func period() -> String {
     if let index = calendarPopup.itemArray.firstIndex(where: { ($0.representedObject as? String) == selectedSource }) {
       calendarPopup.selectItem(at: index)
     }
+    if !identifier.isEmpty && !calendarPopup.itemArray.contains(where: { ($0.representedObject as? String) == selectedSource }) {
+      calendarPopup.addItem(withTitle: "Zapisane konto — chwilowo niedostępne")
+      calendarPopup.lastItem?.representedObject = identifier
+      calendarPopup.select(calendarPopup.lastItem)
+    }
     if calendarPopup.numberOfItems == 0 { calendarPopup.addItem(withTitle: "Brak dostępu do kont kalendarza") }
     calendarPopup.isEnabled = calendarToggle.state == .on && !sources.isEmpty
   }
@@ -1298,6 +1303,10 @@ private func period() -> String {
     configuredSyncEnabled = syncEnabled
     configuredCalendarEnabled = true
     setupSettingsPanel()
+    let unavailableCalendar = "selfcheck-unavailable-calendar"
+    populateCalendarSources(selected: unavailableCalendar)
+    precondition(calendarPopup.selectedItem?.representedObject as? String == unavailableCalendar,
+                 "Brak dostępu nie może usuwać zapisanego konta kalendarza")
     let header = makeHeader().view!
     let overtimeStatus = try! JSONDecoder().decode(ReportStatus.self, from: Data(#"{"checkedAt":"2026-09-30T08:00:00Z","expectedSeconds":28800,"month":{"from":"2026-09-01","to":"2026-09-29","workingDays":21,"sourceSeconds":615600,"missing":[]},"monthCapacity":{"workingDays":22,"daysOff":8,"expectedSeconds":644400,"reportedSeconds":622800}}"#.utf8))
     renderHeader(overtimeStatus, today: nil, month: overtimeStatus.month, weekendText: nil, missingDays: 0)

@@ -228,6 +228,13 @@ Tag `vX.Y.Z` ustawia wersję aplikacji i uruchamia workflow publikujący podpisa
 sekretu Actions `SPARKLE_PRIVATE_KEY`; jego wartością jest zawartość lokalnego, ignorowanego przez
 Git pliku `.sparkle/private-key`.
 
+Wydania korzystają ze stałego własnego certyfikatu podpisywania kodu. Sekrety Actions
+`MACOS_SIGN_P12` (archiwum PKCS#12 zakodowane base64) i `MACOS_SIGN_PASSWORD` muszą zachowywać
+ten sam certyfikat pomiędzy aktualizacjami. Podpis ad hoc zmienia tożsamość aplikacji przy każdym
+wydaniu i powoduje utratę zgody na Kalendarz. CI sprawdza zgodność tożsamości dwóch różnych
+programów i blokuje wydanie bez podpisu opartego na certyfikacie. Własny certyfikat nie zastępuje
+Developer ID ani notaryzacji. Po przejściu z wcześniejszych wydań zgoda może być potrzebna raz jeszcze.
+
 Notatki z `release-notes/X.Y.Z.md` są osadzane w appcaście i wyświetlane bezpośrednio w oknie
 Sparkle. Gdy pliku nie ma, workflow używa tytułów commitów od poprzedniego taga.
 
