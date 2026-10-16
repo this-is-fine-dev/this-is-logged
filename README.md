@@ -78,11 +78,11 @@ Menu zawiera:
 Odświeżanie, bezpieczne uzupełnianie drugiej Jiry i aktualizacje działają automatycznie. Opcje
 techniczne pozostają w logach systemowych, a ręczne sprawdzenie aktualizacji jest dostępne w ustawieniach.
 
-Jeśli krótszy dzień jest prawidłowy (np. odbiór nadgodzin), rozwiń **Uzupełnij brakujące raporty**,
-wybierz datę i **Zatwierdź 6.00 h jako pełny dzień**. Zatwierdzana jest liczba godzin widoczna
+Jeśli krótszy dzień jest prawidłowy (np. odbiór nadgodzin), w oknie aplikacji otwórz **Synchronizacja**,
+wybierz datę i kliknij **Zatwierdź 6.00 h jako pełny dzień** pod datą. Zatwierdzana jest liczba godzin widoczna
 w raporcie. Po odświeżeniu dzień nie jest traktowany jako brak w menu, przypomnieniach ani
 bilansie miesiąca; analiza dnia używa zatwierdzonej normy. Worklogi i synchronizacja Jiry pozostają
-bez zmian. Zatwierdzenie można cofnąć w menu **Zatwierdzone dni**. Jeśli raport zostanie później
+bez zmian. Zatwierdzenie można cofnąć przyciskiem w tym samym miejscu lub w menu **Zatwierdzone dni**. Jeśli raport zostanie później
 zmniejszony poniżej zatwierdzonej liczby godzin, ostrzeżenie pojawi się ponownie.
 
 ## Powiadomienia

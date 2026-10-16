@@ -353,7 +353,7 @@ private func period() -> String {
     menu.minimumWidth = 390
     menu.addItem(makeHeader())
     menu.addItem(.separator())
-    reportSummary.isEnabled = false
+    reportSummary.isEnabled = true
     reportSummary.title = "Czekam na dane z Jiry"
     menu.addItem(reportSummary)
     menu.addItem(approvedDaysMenu)
@@ -577,6 +577,7 @@ private func period() -> String {
     ])
     let synchronizationController = SyncViewController(period: LocalDay(Date()).description) { [weak self] in
       guard !arguments.contains(where: { $0.contains("selfcheck") }) else { return }
+      if let settings = try? SettingsStore().loadDraft() { self?.activityController?.updateSettings(settings) }
       self?.refreshReports()
     }
     self.synchronizationController = synchronizationController
@@ -1341,6 +1342,7 @@ private func period() -> String {
       configuredCalendarEnabled = enabled
       setupMenu()
       precondition(reportSummary.menu === item.menu)
+      precondition(reportSummary.isEnabled, "Menu brakujących raportów musi pozwalać otworzyć zatwierdzanie dnia")
       precondition(approvedDaysMenu.menu === item.menu)
       precondition(connectionWarning.menu === item.menu)
       precondition(collisionAction.menu === item.menu)

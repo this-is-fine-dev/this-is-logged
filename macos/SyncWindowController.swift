@@ -7,6 +7,8 @@ import ThisIsLoggedCore
   private let dayPicker = NSDatePicker(frame: .zero)
   private let refreshButton = NSButton(title: "Odśwież", target: nil, action: nil)
   private let periodLabel = NSTextField(labelWithString: "")
+  private let approvalButton = NSButton(title: "Zatwierdź dzień", target: nil, action: nil)
+  private let approvalStatus = NSTextField(wrappingLabelWithString: "Wybierz zakończony dzień, aby zatwierdzić krótszy czas pracy.")
   private var loadTask: Task<Void, Never>?
   private var writing = false
   private let feedback = NSTextField(labelWithString: "Pobieram dane z obu instancji Jiry…")
@@ -42,6 +44,8 @@ import ThisIsLoggedCore
     plan = nil
     engine = nil
     executeButton.isEnabled = false
+    approvalButton.isEnabled = false
+    approvalStatus.stringValue = "Pobieram godziny wybranego dnia…"
     choices.removeAll()
     rows.arrangedSubviews.forEach { rows.removeArrangedSubview($0); $0.removeFromSuperview() }
     periodLabel.stringValue = "Okres: \(selectedPeriod)"
@@ -90,6 +94,14 @@ import ThisIsLoggedCore
     periodLabel.font = .systemFont(ofSize: 12)
     periodLabel.stringValue = "Okres: \(selectedPeriod)"
     root.addArrangedSubview(periodLabel)
+    approvalButton.target = self
+    approvalButton.action = #selector(toggleDayApproval)
+    approvalButton.isEnabled = false
+    root.addArrangedSubview(approvalButton)
+    approvalStatus.font = .systemFont(ofSize: 12)
+    approvalStatus.textColor = .secondaryLabelColor
+    root.addArrangedSubview(approvalStatus)
+    approvalStatus.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true
 
     let scroll = NSScrollView()
     scroll.hasVerticalScroller = true
@@ -200,7 +212,39 @@ import ThisIsLoggedCore
     }
     feedback.textColor = additions.isEmpty && collisions.isEmpty ? .systemGreen : .systemOrange
     executeButton.isEnabled = !additions.isEmpty
+    updateDayApproval()
     resizeDocument()
+  }
+
+  private func updateDayApproval() {
+    guard let plan, plan.from == plan.to, plan.from < LocalDay(Date()) else {
+      approvalButton.isEnabled = false
+      approvalStatus.stringValue = "Wybierz jeden zakończony dzień, aby zatwierdzić krótszy czas pracy."
+      return
+    }
+    let approved = (try? SettingsStore().loadDraft())?.approvedDaySeconds[plan.from.description]
+    let seconds = plan.items.first { $0.day == plan.from }?.sourceSeconds ?? 0
+    approvalButton.title = approved == nil ? "Zatwierdź \(hours(seconds)) h jako pełny dzień" : "Cofnij zatwierdzenie dnia"
+    approvalButton.isEnabled = plan.cachedSourceAt == nil
+    approvalStatus.stringValue = approved.map { "Zatwierdzono \(hours($0)) h. Ta liczba godzin wystarcza do zamknięcia dnia." }
+      ?? "Odbiór nadgodzin lub krótszy dzień — bez alertu o brakujących godzinach. Nie zmienia wpisów w Jirze."
+    if plan.cachedSourceAt != nil { approvalStatus.stringValue = "Odśwież dane z Jiry głównej przed zatwierdzeniem dnia." }
+  }
+
+  @objc private func toggleDayApproval() {
+    guard !writing, let plan, plan.cachedSourceAt == nil, plan.from == plan.to, plan.from < LocalDay(Date()) else { return }
+    do {
+      let store = SettingsStore()
+      var settings = try store.load()
+      let day = plan.from.description
+      settings.approvedDaySeconds[day] = settings.approvedDaySeconds[day] == nil
+        ? plan.items.first { $0.day == plan.from }?.sourceSeconds ?? 0 : nil
+      try store.save(settings)
+      updateDayApproval()
+      completion()
+    } catch {
+      approvalStatus.stringValue = "Nie udało się zapisać: \(error.localizedDescription)"
+    }
   }
 
   private func resizeDocument() {
@@ -260,6 +304,7 @@ import ThisIsLoggedCore
     guard alert.runModal() == .alertFirstButtonReturn else { return }
 
     writing = true
+    approvalButton.isEnabled = false
     dayPicker.isEnabled = false
     refreshButton.isEnabled = false
     executeButton.isEnabled = false
@@ -271,6 +316,7 @@ import ThisIsLoggedCore
         writing = false
         dayPicker.isEnabled = true
         refreshButton.isEnabled = true
+        updateDayApproval()
       }
       do {
         guard !(try SettingsStore().load()).isOnVacation() else {
@@ -304,6 +350,7 @@ import ThisIsLoggedCore
   private func show(error: String) {
     progress.stopAnimation(nil)
     executeButton.isEnabled = false
+    approvalButton.isEnabled = false
     feedback.textColor = .systemRed
     feedback.stringValue = error
   }
@@ -327,6 +374,8 @@ import ThisIsLoggedCore
     let viewport = rows.enclosingScrollView!.contentView
     precondition(
       dayPicker.frame.height > 0 && executeButton.frame.height > 0 && rows.frame.width > 0 && rows.frame.height > 30 &&
+        approvalButton.isEnabled && approvalButton.frame.height > 0 &&
+        view.bounds.contains(view.convert(approvalButton.bounds, from: approvalButton)) &&
         renderedViews.count == 8 && renderedViews.allSatisfy {
           let frame = viewport.convert($0.bounds, from: $0)
           return frame.height > 0 && frame.minX >= 0 && frame.maxX <= viewport.bounds.width
@@ -346,6 +395,13 @@ import ThisIsLoggedCore
       rows.arrangedSubviews.count == 2 && !executeButton.isEnabled,
       "Okno nie pokazuje wyniku zakończonej synchronizacji"
     )
+    var shorterDay = try! JSONDecoder().decode(SyncPlan.self, from: Data(#"{"from":"2026-09-08","to":"2026-09-08","targetIssue":"AUT-1","items":[{"day":"2026-09-08","sourceSeconds":21600,"targetSeconds":21600,"issueKeys":[],"targetWorklogIDs":[],"state":"synced"}]}"#.utf8))
+    render(shorterDay)
+    precondition(approvalButton.isEnabled && approvalButton.title == "Zatwierdź 6.00 h jako pełny dzień",
+                 "Zsynchronizowane 6 h musi dać się zatwierdzić bezpośrednio w oknie")
+    shorterDay.cachedSourceAt = "2026-09-08T16:00:00Z"
+    render(shorterDay)
+    precondition(!approvalButton.isEnabled, "Nie zatwierdzaj nieaktualnych danych z pamięci")
     print("ok")
   }
 }
