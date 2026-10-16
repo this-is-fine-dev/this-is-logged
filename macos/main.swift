@@ -275,6 +275,7 @@ private func period() -> String {
   private let headerTodayLabel = NSTextField(labelWithString: "DZISIAJ")
   private let headerTodayValue = NSTextField(labelWithString: "—")
   private let reportSummary = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+  private let approvedDaysMenu = NSMenuItem(title: "Zatwierdzone dni", action: nil, keyEquivalent: "")
   private let connectionWarning = NSMenuItem(title: "", action: nil, keyEquivalent: "")
   private lazy var collisionAction = actionItem("Wyjaśnij różnice…", #selector(resolveCollisions), "")
   private let sourceURLField = NSTextField(frame: .zero)
@@ -355,6 +356,7 @@ private func period() -> String {
     reportSummary.isEnabled = false
     reportSummary.title = "Czekam na dane z Jiry"
     menu.addItem(reportSummary)
+    menu.addItem(approvedDaysMenu)
     connectionWarning.isEnabled = false
     connectionWarning.isHidden = true
     menu.addItem(connectionWarning)
@@ -866,7 +868,8 @@ private func period() -> String {
   private func refresh() {
     let now = Date()
     let currentDay = LocalDay(now)
-    if let settings = try? SettingsStore().loadDraft(), settings.isOnVacation(on: currentDay),
+    let settings = try? SettingsStore().loadDraft()
+    if let settings, settings.isOnVacation(on: currentDay),
        let vacationEnd = settings.vacationEnd {
       renderVacation(until: vacationEnd)
       return
@@ -887,12 +890,25 @@ private func period() -> String {
     renderHeader(status, today: today, month: completedMonth, weekendText: isWeekend ? "Dzień wolny" : nil, missingDays: missingDays)
 
     reportSummary.submenu = NSMenu()
+    approvedDaysMenu.submenu = NSMenu()
+    for (date, seconds) in (settings?.approvedDaySeconds ?? [:]).sorted(by: { $0.key > $1.key }) {
+      let undo = actionItem("\(date) · \(formatSeconds(seconds)) h · Cofnij zatwierdzenie", #selector(undoDayApproval(_:)), "")
+      undo.representedObject = date
+      approvedDaysMenu.submenu?.addItem(undo)
+    }
+    approvedDaysMenu.isHidden = settings?.approvedDaySeconds.isEmpty ?? true
     if let completedMonth, missingDays > 0 {
       reportSummary.title = "Uzupełnij brakujące raporty · \(missingDays)"
       let expected = status?.expectedSeconds ?? Int((Double(configuredWorkdayHours) ?? 8) * 3600)
-      setDetails(reportSummary, completedMonth.missing.map {
-        "\(shortDate($0.date)) · brakuje \(formatSeconds(max(0, expected - $0.sourceSeconds))) h"
-      })
+      for day in completedMonth.missing {
+        let dayExpected = settings?.approvedDaySeconds[day.date] ?? expected
+        let detail = NSMenuItem(title: "\(shortDate(day.date)) · brakuje \(formatSeconds(max(0, dayExpected - day.sourceSeconds))) h", action: nil, keyEquivalent: "")
+        detail.submenu = NSMenu()
+        let approve = actionItem("Zatwierdź \(formatSeconds(day.sourceSeconds)) h jako pełny dzień", #selector(approveDay(_:)), "")
+        approve.representedObject = day
+        detail.submenu?.addItem(approve)
+        reportSummary.submenu?.addItem(detail)
+      }
     } else if status != nil {
       reportSummary.title = "Wszystkie raporty są uzupełnione"
       setDetails(reportSummary, ["Monitoring i synchronizacja działają automatycznie."])
@@ -937,6 +953,7 @@ private func period() -> String {
     setDetails(reportSummary, ["Automatyzacja wznowi się po urlopie."])
     connectionWarning.isHidden = true
     collisionAction.isHidden = true
+    approvedDaysMenu.isHidden = true
     item.button?.title = " Urlop"
     item.button?.image = normalMenuIcon ?? NSImage(systemSymbolName: "clock", accessibilityDescription: "This Is Logged")
   }
@@ -962,7 +979,11 @@ private func period() -> String {
     }
     var summary = periodSummary(month)
     if month != nil, let capacity = status.monthCapacity {
-      let overtime = capacity.expectedSeconds - capacity.workingDays * expected
+      let approvals = (try? SettingsStore().loadDraft())?.approvedDaySeconds ?? [:]
+      let monthStart = LocalDay("\(LocalDay(Date()).monthID)-01")!
+      let adjustment = Reporting.workdays(from: monthStart, through: monthStart.adding(months: 1).adding(days: -1))
+        .reduce(0) { $0 + (approvals[$1.description].map { $0 - expected } ?? 0) }
+      let overtime = capacity.expectedSeconds - capacity.workingDays * expected - adjustment
       if overtime > 0 { summary += " (w tym \(formatSeconds(overtime)) h nadgodzin)" }
     }
     if status.error != nil, let checked = isoDate(status.lastSuccessfulAt ?? status.checkedAt) {
@@ -987,7 +1008,8 @@ private func period() -> String {
       headerTodayValue.stringValue = "\(formatSeconds(todaySeconds)) h · dzień wolny"
       return
     }
-    headerTodayValue.stringValue = "\(formatSeconds(todaySeconds)) / \(formatSeconds(expected)) h"
+    let todayExpected = (try? SettingsStore().loadDraft())?.expectedSeconds(on: LocalDay(Date())) ?? expected
+    headerTodayValue.stringValue = "\(formatSeconds(todaySeconds)) / \(formatSeconds(todayExpected)) h"
   }
 
   private func periodSummary(_ value: PeriodStatus?) -> String {
@@ -1066,6 +1088,31 @@ private func period() -> String {
   @objc private func refreshReports() {
     reportSummary.title = "Odświeżam dane…"
     runAgent(statusLabel, restart: true)
+  }
+
+  @objc private func approveDay(_ sender: NSMenuItem) {
+    guard let day = sender.representedObject as? MissingDay,
+          let date = LocalDay(day.date), date < LocalDay(Date()) else { return }
+    saveDayApproval(date: day.date, seconds: day.sourceSeconds)
+  }
+
+  @objc private func undoDayApproval(_ sender: NSMenuItem) {
+    guard let date = sender.representedObject as? String else { return }
+    saveDayApproval(date: date, seconds: nil)
+  }
+
+  private func saveDayApproval(date: String, seconds: Int?) {
+    do {
+      let store = SettingsStore()
+      var settings = try store.load()
+      settings.approvedDaySeconds[date] = seconds
+      try store.save(settings)
+      activityController?.updateSettings(settings)
+      refresh()
+      refreshReports()
+    } catch {
+      NSAlert(error: error).runModal()
+    }
   }
 
   private func runAgent(_ label: String, restart: Bool = false) {
@@ -1170,6 +1217,7 @@ private func period() -> String {
       commentIssueKeys: commentKeysToggle.state == .on,
       reminderTime: reminder,
       workdayHours: hours,
+      approvedDaySeconds: (try? SettingsStore().loadDraft())?.approvedDaySeconds ?? [:],
       vacationStart: vacationStart,
       vacationEnd: vacationEnd,
       claudeIntegrationEnabled: claudeIntegration,
@@ -1293,6 +1341,7 @@ private func period() -> String {
       configuredCalendarEnabled = enabled
       setupMenu()
       precondition(reportSummary.menu === item.menu)
+      precondition(approvedDaysMenu.menu === item.menu)
       precondition(connectionWarning.menu === item.menu)
       precondition(collisionAction.menu === item.menu)
     }

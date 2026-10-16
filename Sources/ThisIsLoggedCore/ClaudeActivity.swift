@@ -458,7 +458,7 @@ public struct ClaudeMCPServer: Sendable {
       let activity = try store.activity(
         on: day,
         now: now,
-        targetMinutes: arguments["target_minutes"] as? Int,
+        targetMinutes: settings?.approvedDaySeconds[LocalDay(day).description].map { $0 / 60 } ?? arguments["target_minutes"] as? Int,
         reservedIntervals: meetings.map(\.interval),
         fallbackIssue: settings?.catchAllIssue ?? "Nieprzypisane",
         model: calendarError == nil ? model : nil

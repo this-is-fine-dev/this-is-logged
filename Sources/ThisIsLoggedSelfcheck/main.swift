@@ -137,6 +137,29 @@ let completedOvertime = Reporting.analyze(now: septemberEnd, expectedSeconds: ei
 precondition(completedOvertime.monthCapacity.reportedSeconds == 179 * 3600)
 precondition(completedOvertime.monthCapacity.expectedSeconds == 179 * 3600)
 
+let approvalToday = LocalDay("2026-10-16")!
+let shorterDay = LocalDay("2026-10-15")!
+var approvalDays = Dictionary(uniqueKeysWithValues:
+  Reporting.workdays(from: LocalDay("2026-10-01")!, through: approvalToday).map { ($0, DayTotal(seconds: eightHours)) })
+approvalDays[shorterDay] = DayTotal(seconds: 6 * 3600)
+approvalDays[LocalDay("2026-10-14")!] = DayTotal(seconds: 10 * 3600)
+let unapproved = Reporting.analyze(now: approvalToday, expectedSeconds: eightHours, sourceDays: approvalDays)
+precondition(unapproved.underreported == [shorterDay])
+let approved = Reporting.analyze(now: approvalToday, expectedSeconds: eightHours, sourceDays: approvalDays,
+  targetDays: [shorterDay: DayTotal(seconds: 3600)], approvedDaySeconds: [shorterDay.description: 6 * 3600])
+precondition(approved.underreported.isEmpty && approved.yesterday.missing.isEmpty && approved.week.missing.isEmpty && approved.month.missing.isEmpty)
+precondition(approved.monthCapacity.expectedSeconds == unapproved.monthCapacity.expectedSeconds - 2 * 3600)
+precondition(approved.monthCapacity.reportedSeconds == unapproved.monthCapacity.reportedSeconds)
+precondition(approved.yesterday.differences?.first?.sourceSeconds == 6 * 3600, "Approval must not change synchronization amounts")
+approvalDays[shorterDay] = DayTotal(seconds: 5 * 3600)
+let reducedReport = Reporting.analyze(now: approvalToday, expectedSeconds: eightHours, sourceDays: approvalDays,
+  approvedDaySeconds: [shorterDay.description: 6 * 3600])
+precondition(reducedReport.underreported == [shorterDay], "Removing reported hours below an approved amount must warn again")
+approvalDays[shorterDay] = DayTotal()
+let approvedOff = Reporting.analyze(now: approvalToday, expectedSeconds: eightHours, sourceDays: approvalDays,
+  approvedDaySeconds: [shorterDay.description: 0])
+precondition(approvedOff.underreported.isEmpty)
+
 let daysOffOvertime = Reporting.analyze(now: LocalDay("2026-12-28")!, expectedSeconds: eightHours, sourceDays: [
   LocalDay("2026-12-24")!: DayTotal(seconds: 3600),
   LocalDay("2026-12-27")!: DayTotal(seconds: 2 * 3600),
@@ -183,6 +206,7 @@ WORKDAY_HOURS=7,5
 precondition(legacy.source.url.absoluteString == "https://firma.atlassian.net")
 precondition(legacy.synchronizationEnabled && legacy.targetIssue == "AUT-1" && legacy.target?.token == "target=x")
 precondition(legacy.workdayHours == 7.5)
+precondition(legacy.approvedDaySeconds.isEmpty)
 precondition(!legacy.calendarIntegrationEnabled && legacy.calendarIdentifier.isEmpty && legacy.catchAllIssue == "RPR-18")
 var vacationSettings = legacy
 vacationSettings.vacationStart = LocalDay("2026-09-10")!
@@ -226,6 +250,17 @@ let settingsDirectory = FileManager.default.temporaryDirectory.appendingPathComp
 let settingsFile = settingsDirectory.appendingPathComponent("settings.json")
 let settingsStore = SettingsStore(file: settingsFile, legacyFile: settingsDirectory.appendingPathComponent("legacy.env"))
 vacationSettings.vacationEnd = LocalDay("2026-09-17")!
+vacationSettings.approvedDaySeconds = ["2026-10-15": 21600]
+precondition(vacationSettings.expectedSeconds(on: shorterDay) == 21600)
+precondition(vacationSettings.expectedSeconds(on: approvalToday) == 27000)
+for invalid in [["2026-02-30": 21600], ["2026-10-15": -1], ["2026-10-15": 86401]] {
+  var invalidSettings = vacationSettings
+  invalidSettings.approvedDaySeconds = invalid
+  do {
+    _ = try invalidSettings.validated()
+    preconditionFailure("Invalid day approvals must be rejected")
+  } catch SettingsError.invalidSchedule {}
+}
 try settingsStore.save(vacationSettings)
 let savedSettings = try settingsStore.load()
 precondition(savedSettings == vacationSettings)
@@ -492,8 +527,17 @@ Task.detached {
     let reminder = try await engine.reminder(now: LocalDay("2026-09-03")!)
     precondition(reminder.missingDays.map(\.date.description) == ["2026-09-01", "2026-09-03"])
     precondition(reminder.message?.contains("Dzisiaj masz 1.00") == true)
+    var approvalSettings = engineSettings
+    approvalSettings.approvedDaySeconds = ["2026-09-01": 7200]
+    let approvalEngine = TimeReportEngine(settings: approvalSettings, source: sourceJira, target: targetJira)
+    let approvedSnapshot = try await approvalEngine.refresh(now: LocalDay("2026-09-03")!)
+    precondition(approvedSnapshot.month?.missing.isEmpty == true)
+    let approvedReminder = approvalEngine.reminder(from: snapshot, now: LocalDay("2026-09-03")!)
+    precondition(approvedReminder.missingDays.map(\.date.description) == ["2026-09-03"])
+    let approvedPlan = try await approvalEngine.syncPlan(from: LocalDay("2026-09-01")!, to: LocalDay("2026-09-04")!)
 
     let plan = try await engine.syncPlan(from: LocalDay("2026-09-01")!, to: LocalDay("2026-09-04")!)
+    precondition(approvedPlan == plan, "Day approval must not alter Jira synchronization")
     precondition(plan.items.map(\.state) == [.add, .synced, .collision, .collision])
     precondition(plan.items.last?.sourceSeconds == 0, "Dzień istniejący tylko w celu musi być widoczną kolizją")
     let automatic = try await engine.execute(plan)

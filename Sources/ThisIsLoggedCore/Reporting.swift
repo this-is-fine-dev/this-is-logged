@@ -146,7 +146,8 @@ public enum Reporting {
     now: LocalDay,
     expectedSeconds: Int,
     sourceDays: [LocalDay: DayTotal],
-    targetDays: [LocalDay: DayTotal]? = nil
+    targetDays: [LocalDay: DayTotal]? = nil,
+    approvedDaySeconds: [String: Int] = [:]
   ) -> ReportAnalysis {
     let yesterday = previousWorkday(before: now)
     let week = workWeek(now: now)
@@ -157,19 +158,19 @@ public enum Reporting {
     let monthDays = sourceDays.filter { $0.key >= monthFrom && $0.key <= now }
     // Monthly target includes recorded overtime; incomplete days do not reduce it.
     let overtimeSeconds = monthDays.reduce(0) { total, entry in
-      total + max(0, entry.value.seconds - (isWorkday(entry.key) ? expectedSeconds : 0))
+      total + max(0, entry.value.seconds - (isWorkday(entry.key) ? approvedDaySeconds[entry.key.description] ?? expectedSeconds : 0))
     }
 
     return ReportAnalysis(
-      today: status(from: now, to: now, expectedSeconds: expectedSeconds, sourceDays: sourceDays, targetDays: targetDays),
-      yesterday: status(from: yesterday, to: yesterday, expectedSeconds: expectedSeconds, sourceDays: sourceDays, targetDays: targetDays),
-      week: status(from: week.lowerBound, to: week.upperBound, expectedSeconds: expectedSeconds, sourceDays: sourceDays, targetDays: targetDays),
-      month: status(from: monthFrom, to: yesterday, expectedSeconds: expectedSeconds, sourceDays: sourceDays, targetDays: targetDays),
-      underreported: workdays(from: monthFrom, through: now).filter { sourceDays[$0, default: DayTotal()].seconds < expectedSeconds },
+      today: status(from: now, to: now, expectedSeconds: expectedSeconds, sourceDays: sourceDays, targetDays: targetDays, approvedDaySeconds: approvedDaySeconds),
+      yesterday: status(from: yesterday, to: yesterday, expectedSeconds: expectedSeconds, sourceDays: sourceDays, targetDays: targetDays, approvedDaySeconds: approvedDaySeconds),
+      week: status(from: week.lowerBound, to: week.upperBound, expectedSeconds: expectedSeconds, sourceDays: sourceDays, targetDays: targetDays, approvedDaySeconds: approvedDaySeconds),
+      month: status(from: monthFrom, to: yesterday, expectedSeconds: expectedSeconds, sourceDays: sourceDays, targetDays: targetDays, approvedDaySeconds: approvedDaySeconds),
+      underreported: workdays(from: monthFrom, through: now).filter { sourceDays[$0, default: DayTotal()].seconds < (approvedDaySeconds[$0.description] ?? expectedSeconds) },
       monthCapacity: MonthCapacity(
         workingDays: monthWorkdays.count,
         daysOff: monthTo.day - monthWorkdays.count,
-        expectedSeconds: monthWorkdays.count * expectedSeconds + overtimeSeconds,
+        expectedSeconds: monthWorkdays.reduce(0) { $0 + (approvedDaySeconds[$1.description] ?? expectedSeconds) } + overtimeSeconds,
         reportedSeconds: monthDays.values.reduce(0) { $0 + $1.seconds }
       )
     )
@@ -208,7 +209,8 @@ public enum Reporting {
     to: LocalDay,
     expectedSeconds: Int,
     sourceDays: [LocalDay: DayTotal],
-    targetDays: [LocalDay: DayTotal]?
+    targetDays: [LocalDay: DayTotal]?,
+    approvedDaySeconds: [String: Int]
   ) -> PeriodReport {
     let expectedDays = workdays(from: from, through: to)
     let sourceSeconds = sourceDays.filter { $0.key >= from && $0.key <= to }.values.reduce(0) { $0 + $1.seconds }
@@ -228,7 +230,7 @@ public enum Reporting {
       targetSeconds: targetSeconds,
       missing: expectedDays.compactMap {
         let seconds = sourceDays[$0, default: DayTotal()].seconds
-        return seconds < expectedSeconds ? MissingDay(date: $0, sourceSeconds: seconds) : nil
+        return seconds < (approvedDaySeconds[$0.description] ?? expectedSeconds) ? MissingDay(date: $0, sourceSeconds: seconds) : nil
       },
       differences: differences
     )

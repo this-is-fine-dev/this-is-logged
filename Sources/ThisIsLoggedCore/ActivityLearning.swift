@@ -213,7 +213,7 @@ extension ActivityStore {
       let features = ActivityEstimator.features(events: events, end: end, fallbackIssue: settings.catchAllIssue)
         .filter { $0.key != settings.catchAllIssue && $0.key != "Nieprzypisane" && $0.value.activeMinutes >= 5 }
       let baseline = ActivityEstimator.analyze(events: events, start: midnight(day), end: end,
-        targetMinutes: calendar.isDateInWeekend(midnight(day)) ? nil : Int(settings.workdayHours * 60),
+        targetMinutes: calendar.isDateInWeekend(midnight(day)) ? nil : settings.expectedSeconds(on: day) / 60,
         reservedIntervals: [], loggedSecondsByIssue: [:], fallbackIssue: settings.catchAllIssue, model: nil)
       let baselines = Dictionary(uniqueKeysWithValues: baseline.allocations.map { ($0.issueKey, Double($0.minutes)) })
       try recordLearningDay(profile: profile, day: day, features: features, reports: reports[day] ?? [:], baselines: baselines, now: now)

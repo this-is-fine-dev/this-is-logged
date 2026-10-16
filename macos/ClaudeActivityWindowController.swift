@@ -105,7 +105,8 @@ import ThisIsLoggedCore
     }
     let date = datePicker.dateValue
     let now = Date()
-    let target = targetMinutes(for: date, now: now, workdayHours: settings.workdayHours)
+    let dayHours = Double(settings.expectedSeconds(on: LocalDay(date))) / 3600
+    let target = targetMinutes(for: date, now: now, workdayHours: dayHours)
     let range = CalendarIntegration.workRange(on: date, now: now, workdayHours: settings.workdayHours)
     let store = store
     Task.detached {
@@ -224,7 +225,7 @@ import ThisIsLoggedCore
     formatter.dateFormat = "EEEE, d MMMM"
     dayTitle.stringValue = formatter.string(from: datePicker.dateValue).capitalized
     let total = activity.allocations.reduce(0) { $0 + $1.minutes }
-    let target = Calendar.current.isDateInWeekend(datePicker.dateValue) ? 0 : Int(settings.workdayHours * 60)
+    let target = Calendar.current.isDateInWeekend(datePicker.dateValue) ? 0 : settings.expectedSeconds(on: LocalDay(datePicker.dateValue)) / 60
     dayTotal.stringValue = "\(Self.duration(total)) / \(Self.duration(target)) h"
     dayTotal.textColor = total == target || target == 0 ? .labelColor : .systemOrange
     dayStatus.textColor = calendarWarning == nil && jiraWarning == nil ? .secondaryLabelColor : .systemOrange

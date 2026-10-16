@@ -129,7 +129,8 @@ public struct TimeReportEngine: Sendable {
         targetError = error.localizedDescription
       }
     }
-    let reports = Reporting.analyze(now: now, expectedSeconds: expected, sourceDays: sourceDays, targetDays: targetDays)
+    let reports = Reporting.analyze(now: now, expectedSeconds: expected, sourceDays: sourceDays, targetDays: targetDays,
+      approvedDaySeconds: settings.approvedDaySeconds)
     let timestamp = Self.iso(checkedAt)
     var snapshot = ReportSnapshot(
       checkedAt: timestamp,
@@ -160,17 +161,17 @@ public struct TimeReportEngine: Sendable {
   }
 
   public func reminder(from snapshot: ReportSnapshot, now: LocalDay = LocalDay(Date())) -> ReminderDecision {
-    let expected = snapshot.expectedSeconds
+    let expected = Int(settings.workdayHours * 3600)
     let days = snapshot.sourceDays ?? [:]
-    let analysis = Reporting.analyze(now: now, expectedSeconds: expected, sourceDays: days)
+    let analysis = Reporting.analyze(now: now, expectedSeconds: expected, sourceDays: days, approvedDaySeconds: settings.approvedDaySeconds)
     let missing = analysis.underreported.map { MissingDay(date: $0, sourceSeconds: days[$0]?.seconds ?? 0) }
     guard !missing.isEmpty else { return ReminderDecision(missingDays: [], message: nil) }
     var parts: [String] = []
     if let today = missing.first(where: { $0.date == now }) {
-      parts.append("Dzisiaj masz \(Self.hours(today.sourceSeconds)) z oczekiwanych \(Self.hours(expected)) h w Jirze.")
+      parts.append("Dzisiaj masz \(Self.hours(today.sourceSeconds)) z oczekiwanych \(Self.hours(settings.expectedSeconds(on: now))) h w Jirze.")
     }
     let earlier = missing.filter { $0.date != now }.map {
-      String(format: "%02d.%02d (%@/%@ h)", $0.date.day, $0.date.month, Self.hours($0.sourceSeconds), Self.hours(expected))
+      String(format: "%02d.%02d (%@/%@ h)", $0.date.day, $0.date.month, Self.hours($0.sourceSeconds), Self.hours(settings.expectedSeconds(on: $0.date)))
     }
     if !earlier.isEmpty { parts.append("Niepełne poprzednie dni: \(earlier.joined(separator: ", ")).") }
     return ReminderDecision(missingDays: missing, message: parts.joined(separator: " "))

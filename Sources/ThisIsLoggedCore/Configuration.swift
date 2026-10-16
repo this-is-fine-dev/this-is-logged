@@ -20,6 +20,7 @@ public struct AppSettings: Equatable, Sendable {
   public var commentIssueKeys: Bool
   public var reminderTime: String
   public var workdayHours: Double
+  public var approvedDaySeconds: [String: Int]
   public var vacationStart: LocalDay?
   public var vacationEnd: LocalDay?
   public var claudeIntegrationEnabled: Bool
@@ -35,6 +36,7 @@ public struct AppSettings: Equatable, Sendable {
     commentIssueKeys: Bool = false,
     reminderTime: String = "16:00",
     workdayHours: Double = 8,
+    approvedDaySeconds: [String: Int] = [:],
     vacationStart: LocalDay? = nil,
     vacationEnd: LocalDay? = nil,
     claudeIntegrationEnabled: Bool = false,
@@ -49,6 +51,7 @@ public struct AppSettings: Equatable, Sendable {
     self.commentIssueKeys = commentIssueKeys
     self.reminderTime = reminderTime
     self.workdayHours = workdayHours
+    self.approvedDaySeconds = approvedDaySeconds
     self.vacationStart = vacationStart
     self.vacationEnd = vacationEnd
     self.claudeIntegrationEnabled = claudeIntegrationEnabled
@@ -61,6 +64,9 @@ public struct AppSettings: Equatable, Sendable {
     guard Self.validURL(source.url), !source.token.isEmpty else { throw SettingsError.invalidSource }
     if Self.isCloud(source.url), !source.email.contains("@") { throw SettingsError.sourceEmailRequired }
     guard Self.validClock(reminderTime), workdayHours > 0, workdayHours <= 24 else { throw SettingsError.invalidSchedule }
+    guard approvedDaySeconds.allSatisfy({ LocalDay($0.key) != nil && (0...86400).contains($0.value) }) else {
+      throw SettingsError.invalidSchedule
+    }
     if (vacationStart == nil) != (vacationEnd == nil) { throw SettingsError.invalidVacation }
     if let vacationStart, let vacationEnd, vacationStart > vacationEnd { throw SettingsError.invalidVacation }
     if claudeIntegrationEnabled || calendarIntegrationEnabled {
@@ -80,6 +86,10 @@ public struct AppSettings: Equatable, Sendable {
   public func isOnVacation(on day: LocalDay = LocalDay(Date())) -> Bool {
     guard let vacationStart, let vacationEnd else { return false }
     return vacationStart...vacationEnd ~= day
+  }
+
+  public func expectedSeconds(on day: LocalDay) -> Int {
+    approvedDaySeconds[day.description] ?? Int(workdayHours * 3600)
   }
 
   public static func normalizedURL(_ value: String) -> URL? {
@@ -152,6 +162,7 @@ public final class SettingsStore: @unchecked Sendable {
     var commentIssueKeys: Bool
     var reminderTime: String
     var workdayHours: Double
+    var approvedDaySeconds: [String: Int]?
     var vacationStart: LocalDay?
     var vacationEnd: LocalDay?
     var claudeIntegrationEnabled: Bool?
@@ -199,6 +210,7 @@ public final class SettingsStore: @unchecked Sendable {
       commentIssueKeys: stored.commentIssueKeys,
       reminderTime: stored.reminderTime,
       workdayHours: stored.workdayHours,
+      approvedDaySeconds: stored.approvedDaySeconds ?? [:],
       vacationStart: stored.vacationStart,
       vacationEnd: stored.vacationEnd,
       claudeIntegrationEnabled: stored.claudeIntegrationEnabled ?? false,
@@ -222,6 +234,7 @@ public final class SettingsStore: @unchecked Sendable {
       commentIssueKeys: settings.commentIssueKeys,
       reminderTime: settings.reminderTime,
       workdayHours: settings.workdayHours,
+      approvedDaySeconds: settings.approvedDaySeconds,
       vacationStart: settings.vacationStart,
       vacationEnd: settings.vacationEnd,
       claudeIntegrationEnabled: settings.claudeIntegrationEnabled,
