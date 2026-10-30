@@ -1581,17 +1581,18 @@ if let notify = arguments.firstIndex(of: "--notify"), arguments.indices.contains
     }
     if arguments.contains("--dry-run") {
       let seconds = plan.items.filter { $0.state == .add }.reduce(0) { $0 + $1.secondsToAdd }
-      print("PODGLĄD: \(nativeHours(seconds))h -> \(settings.targetIssue) (\(now.monthID))")
+      print("PODGLĄD: \(nativeHours(seconds))h -> \(settings.targetIssue) (\(plan.from) – \(plan.to))")
       return
     }
     let result = try await engine.execute(plan)
     _ = try? await SnapshotStore().refresh(using: engine)
     announceStatusChange()
-    print("zapisano: \(nativeHours(result.writtenSeconds))h -> \(settings.targetIssue) (\(now.monthID))")
+    print("zapisano: \(nativeHours(result.writtenSeconds))h -> \(settings.targetIssue) (\(plan.from) – \(plan.to))")
     let collisionKey = "THIS_IS_LOGGED_COLLISION_\(now.monthID)"
-    if result.collisionsSkipped > 0, !UserDefaults.standard.bool(forKey: collisionKey) {
+    let collisions = plan.items.filter { $0.state == .collision }
+    if let first = collisions.first, let last = collisions.last, !UserDefaults.standard.bool(forKey: collisionKey) {
       if deliverNotification(
-        "Wykryto \(result.collisionsSkipped) różnice w \(now.monthID). Automatyzacja niczego nie nadpisała.",
+        "Wykryto \(result.collisionsSkipped) różnice w okresie \(first.day) – \(last.day). Automatyzacja niczego nie nadpisała.",
         category: collisionCategory,
         identifier: collisionKey
       ) {

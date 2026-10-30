@@ -195,7 +195,10 @@ public struct TimeReportEngine: Sendable {
     }
     let targetUser = try await target.currentUser()
     let targetValues = try await target.issueWorklogs(issue: settings.targetIssue, userID: targetUser.id)
-    let days = Set(sourceValues.keys).union(targetValues.keys.filter { $0 >= from && $0 <= to })
+    // Missing cached days are unknown, not zero-hour reports.
+    let days = Set(sourceValues.keys).union(targetValues.keys.filter {
+      $0 >= from && $0 <= to && (cachedSourceAt == nil || sourceValues[$0] != nil)
+    })
     let items = days.sorted().map { day in
       let source = sourceValues[day, default: DayTotal()]
       let destination = targetValues[day, default: DayTotal()]

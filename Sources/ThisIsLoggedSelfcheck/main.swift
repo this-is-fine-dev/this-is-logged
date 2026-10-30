@@ -586,6 +586,16 @@ Task.detached {
     let repeatedPlan = try await offlineEngine.syncPlan(from: cachedDay, to: cachedDay)
     let repeatedResult = try await offlineEngine.execute(repeatedPlan)
     precondition(repeatedResult.writtenSeconds == 0, "Retry must reread target and avoid duplicate worklogs")
+    let previousMonthDay = LocalDay("2026-08-31")!
+    let partialCacheTarget = FakeJira(user: "target", issue: [
+      previousMonthDay: DayTotal(seconds: 28800),
+      cachedDay: DayTotal(seconds: 28800),
+    ])
+    let partialCacheEngine = TimeReportEngine(settings: engineSettings, source: FailingJira(), target: partialCacheTarget, snapshots: cache)
+    let partialCachePlan = try await partialCacheEngine.syncPlan(from: previousMonthDay, to: cachedDay)
+    precondition(partialCachePlan.items.map(\.day) == [LocalDay("2026-09-01")!, cachedDay],
+      "Days missing from the source cache must not become zero-hour collisions")
+    precondition(partialCachePlan.items.allSatisfy { $0.state != .collision })
     do {
       _ = try await offlineEngine.execute(offlinePlan, actions: [cachedDay: .replace])
       preconditionFailure("Cached source must not allow destructive replacement")
