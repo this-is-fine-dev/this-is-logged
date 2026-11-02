@@ -478,6 +478,70 @@ let mcp = ClaudeMCPServer(store: activityStore)
 let mcpResponse = mcp.response(to: ["jsonrpc": "2.0", "id": 1, "method": "tools/list"])
 let mcpTools = ((mcpResponse?["result"] as? [String: Any])?["tools"] as? [[String: Any]]) ?? []
 precondition(mcpTools.map { $0["name"] as? String }.compactMap { $0 } == ["get_activity", "discard_event", "suggest_attribution", "review_day"])
+
+let httpHeadersFile = activityDirectory.appendingPathComponent("mcp-headers.json")
+let httpServer = ClaudeMCPHTTPServer(store: activityStore, port: 0, headersFile: httpHeadersFile)
+let httpEndpoint = try httpServer.start()
+let repeatedEndpoint = try httpServer.start()
+precondition(repeatedEndpoint == httpEndpoint, "Repeated starts must reuse the listener")
+let httpHeaders = try JSONSerialization.jsonObject(with: Data(contentsOf: httpHeadersFile)) as! [String: String]
+let headerPermissions = try FileManager.default.attributesOfItem(atPath: httpHeadersFile.path)[.posixPermissions] as! NSNumber
+precondition(headerPermissions.intValue == 0o600)
+let httpConfiguration = integration.httpConfiguration(endpoint: httpEndpoint)
+precondition(httpConfiguration["type"] == "http" && httpConfiguration["url"] == httpEndpoint.absoluteString)
+precondition(httpConfiguration["command"] == nil && httpConfiguration["headersHelper"]?.hasPrefix("/bin/cat ") == true)
+
+func httpMCP(_ endpoint: URL, message: String, headers: [String: String], method: String = "POST") async throws -> (Data, HTTPURLResponse) {
+  var request = URLRequest(url: endpoint, timeoutInterval: 3)
+  request.httpMethod = method
+  request.allHTTPHeaderFields = headers.merging(["Content-Type": "application/json", "Accept": "application/json, text/event-stream"]) { value, _ in value }
+  if method == "POST" { request.httpBody = Data(message.utf8) }
+  let (data, response) = try await URLSession.shared.data(for: request)
+  return (data, response as! HTTPURLResponse)
+}
+
+final class MCPHTTPFailure: @unchecked Sendable { var message: String? }
+let httpFailure = MCPHTTPFailure()
+let httpFinished = DispatchSemaphore(value: 0)
+Task.detached {
+  defer { httpFinished.signal() }
+  do {
+    let initialize = #"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}"#
+    async let first = httpMCP(httpEndpoint, message: initialize, headers: httpHeaders)
+    async let second = httpMCP(httpEndpoint, message: #"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#, headers: httpHeaders)
+    let ((firstData, firstResponse), (secondData, secondResponse)) = try await (first, second)
+    precondition(firstResponse.statusCode == 200 && secondResponse.statusCode == 200)
+    let initialized = try JSONSerialization.jsonObject(with: firstData) as! [String: Any]
+    precondition((initialized["result"] as? [String: Any])?["protocolVersion"] as? String == "2025-06-18")
+    let listed = try JSONSerialization.jsonObject(with: secondData) as! [String: Any]
+    precondition(((listed["result"] as? [String: Any])?["tools"] as? [[String: Any]])?.count == 4)
+    let notification = try await httpMCP(httpEndpoint, message: #"{"jsonrpc":"2.0","method":"notifications/initialized"}"#, headers: httpHeaders)
+    precondition(notification.1.statusCode == 202 && notification.0.isEmpty)
+    let unauthenticated = try await httpMCP(httpEndpoint, message: initialize, headers: [:])
+    precondition(unauthenticated.1.statusCode == 401)
+    let badOrigin = try await httpMCP(httpEndpoint, message: initialize, headers: httpHeaders.merging(["Origin": "https://evil.example"]) { _, new in new })
+    precondition(badOrigin.1.statusCode == 403)
+    let badHost = try await httpMCP(httpEndpoint, message: initialize, headers: httpHeaders.merging(["Host": "evil.example"]) { _, new in new })
+    precondition(badHost.1.statusCode == 403)
+    let get = try await httpMCP(httpEndpoint, message: "", headers: httpHeaders, method: "GET")
+    precondition(get.1.statusCode == 405)
+    let invalid = try await httpMCP(httpEndpoint, message: "not JSON", headers: httpHeaders)
+    precondition(invalid.1.statusCode == 400)
+    let version = try await httpMCP(httpEndpoint, message: initialize, headers: httpHeaders.merging(["MCP-Protocol-Version": "invalid"]) { _, new in new })
+    precondition(version.1.statusCode == 400)
+    httpServer.stop()
+    do {
+      _ = try await httpMCP(httpEndpoint, message: initialize, headers: httpHeaders)
+      preconditionFailure("Stopped server must reject connections")
+    } catch {}
+    _ = try httpServer.start()
+    let restartedHeaders = try JSONSerialization.jsonObject(with: Data(contentsOf: httpHeadersFile)) as! [String: String]
+    precondition(restartedHeaders == httpHeaders, "Restart must retain authorization")
+    httpServer.stop()
+  } catch { httpFailure.message = String(describing: error) }
+}
+precondition(httpFinished.wait(timeout: .now() + 20) == .success, "HTTP MCP checks timed out")
+precondition(httpFailure.message == nil, httpFailure.message ?? "HTTP MCP")
 try FileManager.default.removeItem(at: activityDirectory)
 
 let configuration = URLSessionConfiguration.ephemeral

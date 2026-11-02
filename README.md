@@ -115,6 +115,12 @@ Opcję **Zbieraj aktywność z Claude Code** włącza się w ustawieniach aplika
 - rejestruje globalny serwer MCP `this-is-logged` dla wszystkich projektów użytkownika;
 - pozwala agentom odczytać wspólną aktywność i zapisać sugestię przypisania do zadania Jiry.
 
+Wszystkie sesje Claude łączą się przez HTTP z jednym serwerem wewnątrz aplikacji, na
+`127.0.0.1:43819/mcp`. Zamknięcie aplikacji zatrzymuje MCP; samo zamknięcie okna ustawień
+pozostawia aplikację w menu. Serwer nie jest uruchamiany osobno dla każdej sesji.
+Po migracji ze stdio uruchom ponownie istniejące sesje Claude, aby wczytały nową konfigurację.
+Token dostępu jest przechowywany w lokalnym pliku `mcp-headers.json` z prawami `0600`.
+
 Ekran **Analiza dnia** w ustawieniach pokazuje proponowany podział czasu ze wszystkich worktree,
 Jiry i Kalendarza bez ujawniania surowej listy zdarzeń.
 Pozycja w menu tray i akcja z powiadomienia otwierają bezpośrednio ten ekran. Branch lub

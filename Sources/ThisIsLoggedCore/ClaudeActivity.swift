@@ -365,19 +365,6 @@ public struct ClaudeMCPServer: Sendable {
 
   public init(store: ActivityStore = ActivityStore()) { self.store = store }
 
-  public func run() -> Never {
-    while let line = readLine() {
-      guard let data = line.data(using: .utf8),
-            let request = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let response = response(to: request),
-            let output = try? JSONSerialization.data(withJSONObject: response),
-            let text = String(data: output, encoding: .utf8) else { continue }
-      print(text)
-      fflush(stdout)
-    }
-    exit(0)
-  }
-
   public func response(to request: [String: Any]) -> [String: Any]? {
     let id = request["id"]
     guard let method = request["method"] as? String else { return error(id: id, code: -32600, message: "Invalid request") }
@@ -548,8 +535,10 @@ public struct ClaudeCodeIntegration: Sendable {
 
   public func install(executable: URL) throws {
     guard let claude = claudeExecutable() else { throw ClaudeActivityError.claudeMissing }
+    let endpoint = try ClaudeMCPHTTPServer.shared.start()
+    let configuration = try JSONSerialization.data(withJSONObject: httpConfiguration(endpoint: endpoint))
     _ = try? run(claude, ["mcp", "remove", "--scope", "user", Self.serverName])
-    try run(claude, ["mcp", "add", "--scope", "user", "--transport", "stdio", Self.serverName, "--", executable.path, "--mcp"])
+    try run(claude, ["mcp", "add-json", "--scope", "user", Self.serverName, String(decoding: configuration, as: UTF8.self)])
     do {
       try updateHooks(command: "\(Self.shellQuote(executable.path)) --ingest-claude-hook", enabled: true)
     } catch {
@@ -561,6 +550,12 @@ public struct ClaudeCodeIntegration: Sendable {
   public func uninstall() throws {
     try updateHooks(command: "", enabled: false)
     if let claude = claudeExecutable() { _ = try? run(claude, ["mcp", "remove", "--scope", "user", Self.serverName]) }
+    ClaudeMCPHTTPServer.shared.stop()
+  }
+
+  public func httpConfiguration(endpoint: URL) -> [String: String] {
+    ["type": "http", "url": endpoint.absoluteString,
+     "headersHelper": "/bin/cat \(Self.shellQuote(ClaudeMCPHTTPServer.defaultHeadersFile.path))"]
   }
 
   public func hooksSettings(from existing: [String: Any], command: String, enabled: Bool) -> [String: Any] {

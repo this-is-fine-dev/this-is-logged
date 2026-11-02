@@ -1312,11 +1312,12 @@ private func period() -> String {
   }
 
   private func refreshClaudeIntegrationIfNeeded() {
-    guard configuredClaudeEnabled, let executable = Bundle.main.executableURL,
-          let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
-          UserDefaults.standard.string(forKey: "claudeIntegrationVersion") != version else { return }
+    guard configuredClaudeEnabled, let executable = Bundle.main.executableURL else { return }
+    let version = (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev") + "-http-v1"
     Task.detached {
       do {
+        try ClaudeMCPHTTPServer.shared.start()
+        guard UserDefaults.standard.string(forKey: "claudeIntegrationVersion") != version else { return }
         try ClaudeCodeIntegration().reconcile(enabled: true, executable: executable)
         UserDefaults.standard.set(version, forKey: "claudeIntegrationVersion")
       } catch {
@@ -1483,7 +1484,8 @@ if let notify = arguments.firstIndex(of: "--notify"), arguments.indices.contains
     exit(1)
   }
 } else if arguments.contains("--mcp") {
-  ClaudeMCPServer().run()
+  fputs("MCP działa teraz przez HTTP wewnątrz aplikacji. Uruchom This Is Logged i ponownie uruchom sesję Claude.\n", stderr)
+  exit(1)
 } else if arguments.contains("--menu-selfcheck") {
   _ = NSApplication.shared
   let delegate = AppDelegate()
