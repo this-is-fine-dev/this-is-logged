@@ -18,6 +18,8 @@ public struct ReportSnapshot: Codable, Equatable, Sendable {
   public var monthCapacity: MonthCapacity?
   public var sourceDays: [LocalDay: DayTotal]?
   public var sourceIdentity: String?
+  public var automationIdentity: String?
+  public var synchronizationCheckedThrough: LocalDay?
 
   public init(
     checkedAt: String,
@@ -148,7 +150,34 @@ public struct TimeReportEngine: Sendable {
     )
     snapshot.sourceDays = sourceDays
     snapshot.sourceIdentity = sourceIdentity
+    snapshot.automationIdentity = automationIdentity
     return snapshot
+  }
+
+  public func automationIsComplete(_ snapshot: ReportSnapshot?, on day: LocalDay = LocalDay(Date())) -> Bool {
+    guard let snapshot, snapshot.automationIdentity == automationIdentity,
+          snapshot.error == nil, snapshot.targetError == nil,
+          let today = snapshot.today, today.from == day, today.to == day,
+          today.missing.isEmpty, snapshot.underreported?.isEmpty == true,
+          snapshot.week?.missing.isEmpty == true, snapshot.month?.missing.isEmpty == true,
+          let timestamp = snapshot.lastSuccessfulAt else { return false }
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions.insert(.withFractionalSeconds)
+    guard let checked = formatter.date(from: timestamp), LocalDay(checked) == day else { return false }
+    return !settings.synchronizationEnabled || (
+      snapshot.synchronizationCheckedThrough == day &&
+      today.differences?.isEmpty == true && snapshot.week?.differences?.isEmpty == true &&
+      snapshot.month?.differences?.isEmpty == true
+    )
+  }
+
+  private var automationIdentity: String {
+    let fields = [sourceIdentity, String(settings.synchronizationEnabled), settings.target?.url.absoluteString ?? "",
+                  settings.target?.email ?? "", settings.target?.token ?? "", settings.targetIssue,
+                  String(settings.workdayHours), TimeZone.current.identifier] +
+      settings.approvedDaySeconds.sorted { $0.key < $1.key }.map { "\($0.key):\($0.value)" }
+    let data = try! JSONEncoder().encode(fields)
+    return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
   }
 
   private var sourceIdentity: String {
@@ -262,11 +291,28 @@ public actor SnapshotStore {
     try? JSONDecoder().decode(ReportSnapshot.self, from: Data(contentsOf: file))
   }
 
+  public func automationPaused(using engine: TimeReportEngine, on day: LocalDay = LocalDay(Date())) -> Bool {
+    engine.automationIsComplete(read(), on: day)
+  }
+
+  public func resumeAutomation() throws {
+    guard var snapshot = read() else { return }
+    snapshot.automationIdentity = nil
+    snapshot.synchronizationCheckedThrough = nil
+    try write(snapshot)
+  }
+
   @discardableResult
-  public func refresh(using engine: TimeReportEngine, now: LocalDay = LocalDay(Date()), checkedAt: Date = Date()) async throws -> ReportSnapshot {
-    let state: ReportSnapshot
+  public func refresh(using engine: TimeReportEngine, now: LocalDay = LocalDay(Date()), checkedAt: Date = Date(), completedSync: SyncPlan? = nil) async throws -> ReportSnapshot {
+    if let cached = read(), engine.automationIsComplete(cached, on: now) { return cached }
+    var state: ReportSnapshot
     do {
       state = try await engine.refresh(now: now, checkedAt: checkedAt)
+      if let plan = completedSync, plan.cachedSourceAt == nil,
+         plan.from...plan.to == Reporting.synchronizationWindow(now: now),
+         plan.items.allSatisfy({ $0.state != .collision }) {
+        state.synchronizationCheckedThrough = now
+      }
     } catch {
       var previous = read() ?? ReportSnapshot(
         checkedAt: TimeReportEngine.iso(checkedAt),
@@ -280,6 +326,7 @@ public actor SnapshotStore {
       previous.targetError = nil
       state = previous
     }
+    if let cached = read(), engine.automationIsComplete(cached, on: now) { return cached }
     try write(state)
     if let error = state.error ?? state.targetError { throw RuntimeError.savedFailure(error) }
     return state

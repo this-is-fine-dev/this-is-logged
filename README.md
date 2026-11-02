@@ -78,6 +78,12 @@ Menu zawiera:
 Odświeżanie, bezpieczne uzupełnianie drugiej Jiry i aktualizacje działają automatycznie. Opcje
 techniczne pozostają w logach systemowych, a ręczne sprawdzenie aktualizacji jest dostępne w ustawieniach.
 
+Po potwierdzeniu kompletnych raportów i zakończeniu synchronizacji aplikacja wstrzymuje
+automatyczne odpytywanie Jiry do następnego dnia. Odłączenie VPN po rozliczeniu dnia nie powoduje
+wtedy powiadomień o błędzie połączenia. Zaległe raporty lub nierozwiązane różnice nie są pomijane.
+Ręczne odświeżenie albo zmiana ustawień raportowania wznawia sprawdzanie. Jeśli po rozliczeniu
+dnia dopiszesz godziny w Jirze, odśwież dane ręcznie albo poczekaj na następny dzień.
+
 Jeśli krótszy dzień jest prawidłowy (np. odbiór nadgodzin), w oknie aplikacji otwórz **Synchronizacja**,
 wybierz datę i kliknij **Zatwierdź 6.00 h jako pełny dzień** pod datą. Zatwierdzana jest liczba godzin widoczna
 w raporcie. Po odświeżeniu dzień nie jest traktowany jako brak w menu, przypomnieniach ani

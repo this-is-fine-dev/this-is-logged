@@ -875,9 +875,12 @@ private func period() -> String {
       renderVacation(until: vacationEnd)
       return
     }
-    let status = try? JSONDecoder().decode(ReportStatus.self, from: Data(contentsOf: reportStatusURL))
+    let statusData = try? Data(contentsOf: reportStatusURL)
+    let status = statusData.flatMap { try? JSONDecoder().decode(ReportStatus.self, from: $0) }
+    let snapshot = statusData.flatMap { try? JSONDecoder().decode(ReportSnapshot.self, from: $0) }
+    let automationPaused = settings.map { TimeReportEngine.live(settings: $0).automationIsComplete(snapshot, on: currentDay) } ?? false
     let statusIsStale = status.flatMap { isoDate($0.checkedAt) }.map { now.timeIntervalSince($0) >= 55 } ?? true
-    if statusIsStale, now.timeIntervalSince(lastStatusKick) >= 55 {
+    if !automationPaused, statusIsStale, now.timeIntervalSince(lastStatusKick) >= 55 {
       lastStatusKick = now
       runAgent(statusLabel)
     }
@@ -912,7 +915,9 @@ private func period() -> String {
       }
     } else if status != nil {
       reportSummary.title = "Wszystkie raporty są uzupełnione"
-      setDetails(reportSummary, ["Monitoring i synchronizacja działają automatycznie."])
+      setDetails(reportSummary, [automationPaused
+        ? "Dzień rozliczony. Monitoring wstrzymany do jutra lub ręcznego odświeżenia."
+        : "Monitoring i synchronizacja działają automatycznie."])
     } else {
       reportSummary.title = "Czekam na pierwsze dane z Jiry"
       setDetails(reportSummary, ["Po połączeniu dane odświeżą się automatycznie."])
@@ -1088,7 +1093,12 @@ private func period() -> String {
 
   @objc private func refreshReports() {
     reportSummary.title = "Odświeżam dane…"
-    runAgent(statusLabel, restart: true)
+    Task {
+      do {
+        try await SnapshotStore().resumeAutomation()
+        runAgent(statusLabel, restart: true)
+      } catch { NSAlert(error: error).runModal() }
+    }
   }
 
   @objc private func approveDay(_ sender: NSMenuItem) {
@@ -1536,10 +1546,13 @@ if let notify = arguments.firstIndex(of: "--notify"), arguments.indices.contains
   runAgentMode(failureNotificationKey: "THIS_IS_LOGGED_STATUS_ERROR") {
     let settings = try SettingsStore().load()
     guard !settings.isOnVacation() else { print("Urlop — monitoring wstrzymany."); return }
-    let state = try await SnapshotStore().refresh(using: .live(settings: settings))
+    let snapshots = SnapshotStore()
+    let engine = TimeReportEngine.live(settings: settings)
+    guard !(await snapshots.automationPaused(using: engine)) else { print("Dzień rozliczony — monitoring wstrzymany."); return }
+    let state = try await snapshots.refresh(using: engine)
     announceStatusChange()
     print("\(state.checkedAt) miesiąc: \(nativeHours(state.month?.sourceSeconds ?? 0))/\(nativeHours(state.monthCapacity?.expectedSeconds ?? 0))h")
-    if state.error == nil, settings.claudeIntegrationEnabled {
+    if state.error == nil, settings.claudeIntegrationEnabled, !engine.automationIsComplete(state) {
       do { try await ActivityStore().refreshLearning(settings: settings) }
       catch { fputs("Uczenie lokalne odłożone: \(error.localizedDescription)\n", stderr) }
     }
@@ -1548,8 +1561,12 @@ if let notify = arguments.firstIndex(of: "--notify"), arguments.indices.contains
   runAgentMode(failureNotificationKey: "THIS_IS_LOGGED_REMINDER_ERROR") {
     let settings = try SettingsStore().load()
     guard !settings.isOnVacation() else { print("Urlop — powiadomienia wstrzymane."); return }
-    let decision = try await SnapshotStore().reminder(using: .live(settings: settings))
+    let snapshots = SnapshotStore()
+    let engine = TimeReportEngine.live(settings: settings)
+    guard !(await snapshots.automationPaused(using: engine)) else { print("Dzień rozliczony — powiadomienia wstrzymane."); return }
+    let decision = try await snapshots.reminder(using: engine)
     announceStatusChange()
+    guard !(await snapshots.automationPaused(using: engine)) else { print("Dzień rozliczony — powiadomienia wstrzymane."); return }
     let activity = settings.claudeIntegrationEnabled
       ? try? ActivityStore().activity(on: Date()) : nil
     let activityMessage = activity?.events.isEmpty == false
@@ -1566,6 +1583,9 @@ if let notify = arguments.firstIndex(of: "--notify"), arguments.indices.contains
     let settings = try SettingsStore().load()
     guard !settings.isOnVacation() else { print("Urlop — synchronizacja wstrzymana."); return }
     let engine = TimeReportEngine.live(settings: settings)
+    let snapshots = SnapshotStore()
+    let paused = await snapshots.automationPaused(using: engine)
+    guard !paused || arguments.contains("--dry-run") else { print("Dzień rozliczony — synchronizacja wstrzymana."); return }
     let now = LocalDay(Date())
     let window = Reporting.synchronizationWindow(now: now)
     let plan = try await engine.syncPlan(from: window.lowerBound, to: window.upperBound)
@@ -1587,7 +1607,7 @@ if let notify = arguments.firstIndex(of: "--notify"), arguments.indices.contains
       return
     }
     let result = try await engine.execute(plan)
-    _ = try? await SnapshotStore().refresh(using: engine)
+    _ = try? await snapshots.refresh(using: engine, completedSync: plan)
     announceStatusChange()
     print("zapisano: \(nativeHours(result.writtenSeconds))h -> \(settings.targetIssue) (\(plan.from) – \(plan.to))")
     let collisionKey = "THIS_IS_LOGGED_COLLISION_\(now.monthID)"

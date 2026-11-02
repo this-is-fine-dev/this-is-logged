@@ -556,6 +556,7 @@ Task.detached {
   defer { finished.signal() }
   do {
     try await checkLearningRefresh(client: client)
+    try await checkAutomationPause()
     let user = try await client.currentUser()
     precondition(user == JiraUser(id: "u1", displayName: "Fine"))
     let days = try await client.dailyWorklogs(userID: user.id, from: LocalDay("2026-09-01")!, to: LocalDay("2026-09-30")!)
